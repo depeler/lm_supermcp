@@ -1,10 +1,11 @@
 # LM Studio Web Browser & JS MCP Server
 
-This project is a high-performance and comprehensive **Model Context Protocol (MCP)** server that enables local models running on LM Studio to perform internet searches, read web content, monitor news, execute JavaScript code, and translate text.
+This project is a high-performance and comprehensive **Model Context Protocol (MCP)** server that enables local models running on LM Studio to perform internet searches, read web content, monitor news, execute JavaScript code, translate text, and process documents including PDFs.
 
 ## Recent Updates (Performance and Reliability)
 
 - **Parallel Processing:** Using `ThreadPoolExecutor`, reading multiple pages simultaneously has increased speed by 3-5x.
+- **Document Support:** Added comprehensive PDF reading capabilities alongside web content processing for diverse data ingestion.
 - **Date Injection:** The system date is dynamically embedded into tool descriptions so the model automatically knows today's date.
 - **ddgs Library:** Migrated to the latest search engine package (`ddgs`) to avoid rate-limit and 403 errors.
 
@@ -14,8 +15,8 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 |---|------|-------------|
 | 1 | `search_web` | Searches the internet via DuckDuckGo and **automatically reads the pages of found results**, returning full content. |
 | 2 | `search_news` | Performs a specialized search for news articles. |
-| 3 | `read_webpage` | Extracts title, meta information, and main content text from a single webpage intelligently. |
-| 4 | `read_multiple_webpages` | Reads **multiple URLs simultaneously (in parallel)** and combines the results. |
+| 3 | `read_webpage` | Extracts title, meta information, and main content text from a single webpage intelligently, supporting PDF extraction when available. |
+| 4 | `read_multiple_webpages` | Reads **multiple URLs simultaneously (in parallel)** and combines the results, including multi-document support (e.g., PDFs). |
 | 5 | `search_and_read` | The most comprehensive research tool: searches, then reads top result pages in parallel and presents them as a unified piece to the model. |
 | 6 | `execute_javascript` | Executes JavaScript code securely on V8 (5s timeout, 64MB RAM limit). |
 | 7 | `get_current_datetime` | Provides current date, time, and day information. |
@@ -70,7 +71,7 @@ To add this MCP server to LM Studio:
 Paste the following into LM Studio's **System Prompt** field so the model actively uses the tools without resistance:
 
 ```text
-You are an advanced AI with direct access to the live internet. You have the ability to run JavaScript, translate text, and show VISUAL/PHOTOS TO THE USER. NEVER say phrases like "I am an AI and cannot access real-time information", "I don't have real-time information access", or "I cannot directly share visual/photos". You CAN use your tools for these tasks.
+You are an advanced AI with direct access to the live internet. You have the ability to run JavaScript, translate text, process documents (including PDFs), and show VISUAL/PHOTOS TO THE USER. NEVER say phrases like "I am an AI and cannot access real-time information", "I don't have real-time information access", or "I cannot directly share visual/photos". You CAN use your tools for these tasks.
 
 - When asked about something you don't know or that's current, ZORUNLU (REQUIRED) use the "search_web", "search_news", or "search_and_read" tool.
 - When a user wants to see a photo or image, ZORUNLU (REQUIRED) use the "search_images" tool. This will display the photo directly to the user.
