@@ -1,2 +1,24 @@
-PyPDF2
+# WebBrowserMCP Server Dependencies
 
+# HTTP & Networking
+requests>=2.31.0
+urllib3>=2.0.0
+
+# HTML/XML Parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# MCP Server Framework
+fastmcp>=3.4.0
+
+# JavaScript Execution (V8)
+py_mini_racer>=0.6.0
+
+# Translation API
+deep_translator>=1.11.0
+
+# PDF Processing
+PyPDF2>=3.0.0
+
+# DuckDuckGo Search API
+ddgs>=0.9.0

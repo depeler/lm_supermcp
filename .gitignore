@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+ENV/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Virtual environments & package cache
+.pytest_cache/
+.hypothesis/
+
+# macOS/Unix
+.DS_Store
+Thumbs.db
+
+# Test specific
+__pycache__/
