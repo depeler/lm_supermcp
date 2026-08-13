@@ -1,83 +1,90 @@
-# LM Studio Web Browser, JS & PDF MCP Server
+# LM Studio Web Browser & JS MCP Server
 
-Bu proje, LM Studio'da çalışan yerel modellerin **internette arama yapabilmesi**, **web sitelerinden bilgi okuyabilmesi**, **haber takibi yapabilmesi**, **JavaScript kodları çalıştırabilmesi**, **PDF dosyalarını okuyabilmesi** ve **çeviri yapabilmesi** için geliştirilmiş performans odaklı ve kapsamlı bir **Model Context Protocol (MCP)** sunucusudur.
+This project is a high-performance and comprehensive **Model Context Protocol (MCP)** server that enables local models running on LM Studio to perform internet searches, read web content, monitor news, execute JavaScript code, and translate text.
 
-## Son Güncellemeler (Performans ve Güvenilirlik)
-- **Paralel İşleme:** `ThreadPoolExecutor` sayesinde çoklu sayfalar eş zamanlı (paralel) okunarak hız 3-5 kat artırıldı.
-- **Tarih Enjeksiyonu:** Modelin bugünün tarihini otomatik bilmesi için araç açıklamalarına sistem tarihi dinamik olarak gömüldü.
-- **ddgs Kütüphanesi:** Rate-limit ve 403 engellerine takılmamak adına arama motoru paketi en güncel altyapıya (`ddgs`) taşındı.
+## Recent Updates (Performance and Reliability)
 
-## Araçlar (Tools)
+- **Parallel Processing:** Using `ThreadPoolExecutor`, reading multiple pages simultaneously has increased speed by 3-5x.
+- **Date Injection:** The system date is dynamically embedded into tool descriptions so the model automatically knows today's date.
+- **ddgs Library:** Migrated to the latest search engine package (`ddgs`) to avoid rate-limit and 403 errors.
 
-| # | Araç | Açıklama |
-|---|------|----------|
-| 1 | `search_web` | İnternette DuckDuckGo üzerinden arama yapar ve **bulunan sonuçların sayfalarını otomatik olarak okuyup** tam içerikle döner. |
-| 2 | `search_news` | Haberlere özel güncel arama yapar. |
-| 3 | `read_webpage` | Tek bir sayfanın başlık, meta ve ana içerik metnini akıllıca çıkarır. |
-| 4 | `read_multiple_webpages` | Verilen birden fazla URL'yi **aynı anda eş zamanlı (paralel)** okur ve birleştirir. |
-| 5 | `search_and_read` | En kapsamlı araştırma aracı: Arama yapar ve en üstteki sonuç sayfalarını eş zamanlı okuyup tek parça halinde modele sunar. |
-| 6 | `execute_javascript` | V8 motoru üzerinde güvenli (5sn timeout, 64MB RAM) JS kodu çalıştırır. |
-| 7 | `get_current_datetime` | Anlık tarih, saat ve gün bilgisini verir (model çoğu zaman bunu açıklamadan kendi anlar). |
-| 8 | `translate_text` | Metni istenilen dile çevirir (varsayılan: Türkçe). |
-| 10 | `read_pdf` | (YENİ) PDF dosyalarının metin içeriğini çıkarır ve modeli okuma/yazma becerileri için sunar. |
+## Tools
 
-## Kurulum
+| # | Tool | Description |
+|---|------|-------------|
+| 1 | `search_web` | Searches the internet via DuckDuckGo and **automatically reads the pages of found results**, returning full content. |
+| 2 | `search_news` | Performs a specialized search for news articles. |
+| 3 | `read_webpage` | Extracts title, meta information, and main content text from a single webpage intelligently. |
+| 4 | `read_multiple_webpages` | Reads **multiple URLs simultaneously (in parallel)** and combines the results. |
+| 5 | `search_and_read` | The most comprehensive research tool: searches, then reads top result pages in parallel and presents them as a unified piece to the model. |
+| 6 | `execute_javascript` | Executes JavaScript code securely on V8 (5s timeout, 64MB RAM limit). |
+| 7 | `get_current_datetime` | Provides current date, time, and day information. |
+| 8 | `translate_text` | Translates text to the desired language (default: English). |
+| 9 | `search_images` | *(NEW)* Performs image search on the internet and sends found images directly to the model's visual memory. |
 
-1. Depoyu klonlayın veya dosyaları bir klasöre indirin.
-2. Bir sanal ortam oluşturun ve aktif edin:
+## Installation
+
+1. Clone the repository or download files to a directory.
+2. Create a virtual environment and activate it:
+
    ```bash
    python -m venv venv
-   # Windows için:
+   # Windows:
    venv\Scripts\activate
-   # macOS/Linux için:
+   # macOS/Linux:
    source venv/bin/activate
    ```
-3. Gerekli kütüphaneleri yükleyin:
+
+3. Install required libraries:
+
    ```bash
    pip install -r requirements.txt
    ```
 
-## LM Studio Entegrasyonu
+## LM Studio Integration
 
-Bu MCP sunucusunu LM Studio'ya eklemek için:
+To add this MCP server to LM Studio:
 
-1. LM Studio'yu açın.
-2. Sağ taraftaki menüden **Program** (veya ayarlar) bölümüne gidin.
-3. **MCP Servers** -> **Edit mcp.json** yolunu izleyin.
-4. `mcp.json` dosyasını aşağıdaki gibi düzenleyin (`command` ve `args` kısımlarında bilgisayarınızdaki tam/mutlak yolları kullanın):
+1. Open LM Studio.
+2. Go to **Program** (or Settings) in the right-side menu.
+3. Navigate to **MCP Servers** -> **Edit mcp.json**.
+4. Edit `mcp.json` file using absolute paths as shown below:
 
-```json
-{
-  "mcpServers": {
-    "web-and-js-tools": {
-      "command": "C:/Users/kaant/Documents/antigravity/lucid-pasteur/venv/Scripts/python.exe",
-      "args": [
-        "C:/Users/kaant/Documents/antigravity/lucid-pasteur/mcp_server.py"
-      ]
-    }
-  }
-}
-```
+   ```json
+   {
+     "mcpServers": {
+       "web-and-js-tools": {
+         "command": "YOUR_PATH_TO_PYTHON/Scripts/python.exe",
+         "args": [
+           "YOUR_PATH_TO_PROJECT/mcp_server.py"
+         ]
+       }
+     }
+   }
+   ```
 
-*Not: Windows üzerindeyseniz, ters eğik çizgi (`\`) yerine düz eğik çizgi (`/`) kullanmaya özen gösterin.*
+   *Note: On Windows, use forward slashes (`/`) instead of backslashes (`\`).*
 
-## Önerilen System Prompt
+## Recommended System Prompt
 
-Modelin araçları inat etmeden, aktif olarak kullanabilmesi için LM Studio'daki **System Prompt** alanına şunu yapıştırın:
+Paste the following into LM Studio's **System Prompt** field so the model actively uses the tools without resistance:
 
 ```text
-Sen güncel internete doğrudan bağlı olan gelişmiş bir yapay zekasın. Canlı internete erişimin, JavaScript çalıştırma yeteneğin, çeviri aracın, KULLANICIYA GÖRSEL/FOTOĞRAF GÖSTERME yeteneğin ve **PDF dosyalarını okuma** yeteneğin var.
-ASLA "Ben bir yapay zekayım, güncel bilgileri bilemem", "Gerçek zamanlı bilgiye erişemem", "PDF dosyasını okuyamam" veya "Doğrudan görsel/fotoğraf paylaşamam" GİBİ CÜMLELER KURMA! Bu kesinlikle yasaktır. Sen araçlarını (tools) kullanarak bunları yapabilirsin.
-- Bilmediğin veya güncel olan bir şey sorulduğunda ZORUNLU OLARAK "search_web", "search_news" veya "search_and_read" aracını kullan.
-- Kullanıcı senden bir fotoğraf veya görsel görmek istediğinde ZORUNLU OLARAK "search_images" aracını kullan. Bu araç senin yerine kullanıcıya fotoğrafı doğrudan gösterecektir.
-- PDF okuma talebi geldiğinde ZORUNLU OLARAK `read_pdf` aracını kullan (PDF dosyasının yolunu veya URL'yi ver).
-- Hesaplama veya algoritma gerektiğinde "execute_javascript" ile kod çalıştır.
-- Yabancı dildeki metinleri çevirmek için "translate_text" kullan.
+You are an advanced AI with direct access to the live internet. You have the ability to run JavaScript, translate text, and show VISUAL/PHOTOS TO THE USER. NEVER say phrases like "I am an AI and cannot access real-time information", "I don't have real-time information access", or "I cannot directly share visual/photos". You CAN use your tools for these tasks.
+
+- When asked about something you don't know or that's current, ZORUNLU (REQUIRED) use the "search_web", "search_news", or "search_and_read" tool.
+- When a user wants to see a photo or image, ZORUNLU (REQUIRED) use the "search_images" tool. This will display the photo directly to the user.
+- For calculations or algorithmic tasks, run code using "execute_javascript".
+- Use "translate_text" for translating text in foreign languages.
 ```
 
-## Kullanım Örnekleri
+## Usage Examples
 
-- "İnternetten araştır: Bugünün en önemli teknoloji haberleri neler?"
-- "Dünkü Euro/TL kuru ne kadardı?"
-- "1'den 1000'e kadar olan asal sayıları bulan bir JS kodu yaz ve çalıştır."
-- "Bu makaleyi Türkçeye çevir: ..."
+- "Search the internet: What are today's most important technology news?"
+- "What was yesterday's Euro/TL exchange rate?"
+- "Write and run a JS program that finds prime numbers from 1 to 1000."
+- "Translate this article to English: ..."
+
+## License
+
+This project is open source. Feel free to use, modify, and distribute it as needed.
