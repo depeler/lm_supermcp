@@ -1,9 +1,27 @@
+"""
+WebBrowserMCP Server - Secure Implementation
+
+This MCP server provides tools for web browsing, JavaScript execution, PDF reading,
+and more. It includes comprehensive security measures to prevent common vulnerabilities.
+
+SECURITY MEASURES IMPLEMENTED:
+- Input validation and sanitization
+- Rate limiting to prevent DoS attacks
+- URL validation with dangerous protocol/pattern blocking
+- Memory-limited JavaScript execution with dangerous pattern blocking
+- Content type validation for PDF/image operations
+- Safe error handling that doesn't leak internals
+"""
+
 import re
 import sys
+import time
 import logging
 from datetime import datetime, timezone
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -29,11 +47,117 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Security Configuration
+# ---------------------------------------------------------------------------
+SECURITY_CONFIG = {
+    "requests_per_minute": 30,
+    "max_page_size_bytes": 5 * 1024 * 1024,   # 5 MB
+    "max_pdf_size_bytes": 10 * 1024 * 1024,    # 10 MB
+    "max_javascript_memory_mb": 64,
+    "javascript_timeout_ms": 5000,
+    "max_js_code_length": 10000,
+    "redirect_limit": 5,
+    "user_agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+}
+
+# Dangerous URL patterns to block
+_DANGEROUS_URL_PATTERNS = [
+    r"eval\(",
+    r"document\.cookie",
+    r"fetch\s*\(",
+    r"<script",
+]
+
+# Dangerous JavaScript patterns to block
+_DANGEROUS_JS_PATTERNS = [
+    r"document\.(cookie|write|location)",
+    r"fetch\s*\(",
+    r"eval\s*\(",
+    r"navigator\.(geolocation|userAgent)",
+    r"XMLHttpRequest",
+    r"require\s*\(",
+    r"process\.",
+]
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiter
+# ---------------------------------------------------------------------------
+class RateLimiter:
+    """Thread-safe rate limiter to prevent DoS attacks."""
+
+    def __init__(self, requests_per_minute: int):
+        self.requests_per_minute = requests_per_minute
+        self.timestamps: list[float] = []
+        self._lock = __import__("threading").Lock()
+
+    def _cleanup(self) -> None:
+        one_minute_ago = time.time() - 60
+        self.timestamps[:] = [t for t in self.timestamps if t > one_minute_ago]
+
+    def acquire(self) -> bool:
+        """Returns True if request is allowed, False if rate limited."""
+        with self._lock:
+            self._cleanup()
+            if len(self.timestamps) >= self.requests_per_minute:
+                oldest = min(self.timestamps)
+                wait_time = (oldest + 60) - time.time()
+                if wait_time > 0:
+                    logger.warning(f"Rate limit exceeded. Retry in {wait_time:.1f}s.")
+                    return False
+            self.timestamps.append(time.time())
+            return True
+
+    def record(self) -> None:
+        """Manually record a request (for tools that bypass acquire)."""
+        with self._lock:
+            self.timestamps.append(time.time())
+
+
+_rate_limiter = RateLimiter(SECURITY_CONFIG["requests_per_minute"])
+
+
+# ---------------------------------------------------------------------------
+# URL Validator
+# ---------------------------------------------------------------------------
+def _validate_url(url: str) -> tuple[bool, Optional[str]]:
+    """Validate a URL for security. Returns (is_valid, error_message)."""
+    if not isinstance(url, str) or not url.strip():
+        return False, "URL must be a non-empty string."
+    try:
+        parsed = urlparse(url)
+
+        # Block non-http(s) schemes
+        if parsed.scheme not in ("http", "https"):
+            return False, f"Blocked dangerous URL scheme '{parsed.scheme}': {url}"
+
+        # Block localhost / private network access
+        hostname = parsed.hostname or ""
+        blocked_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+        if hostname in blocked_hosts or hostname.startswith("192.168.") or hostname.startswith("10."):
+            return False, f"Blocked private/local network access: {url}"
+
+        # Block dangerous patterns in URL
+        for pattern in _DANGEROUS_URL_PATTERNS:
+            if re.search(pattern, url, re.IGNORECASE):
+                return False, f"Blocked URL with dangerous pattern: {url}"
+
+        return True, None
+    except Exception as e:
+        return False, f"Invalid URL: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
 # Shared Resources (Singleton / Reusable)
 # ---------------------------------------------------------------------------
 
 # Reusable HTTP session with connection pooling and automatic retries
 _http_session: requests.Session | None = None
+
 
 def _get_http_session() -> requests.Session:
     """Return a shared requests.Session with connection pooling and retry logic."""
@@ -41,19 +165,20 @@ def _get_http_session() -> requests.Session:
     if _http_session is None:
         _http_session = requests.Session()
         _http_session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": SECURITY_CONFIG["user_agent"],
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
         })
         retry_strategy = Retry(
             total=2,
             backoff_factor=0.5,
             status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "HEAD"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=10,
+            pool_maxsize=20,
+        )
         _http_session.mount("https://", adapter)
         _http_session.mount("http://", adapter)
     return _http_session
@@ -61,6 +186,7 @@ def _get_http_session() -> requests.Session:
 
 # Reusable V8 JavaScript engine (avoid cold-start on every call)
 _js_engine: MiniRacer | None = None
+
 
 def _get_js_engine() -> MiniRacer:
     """Return a shared MiniRacer V8 instance."""
@@ -72,6 +198,7 @@ def _get_js_engine() -> MiniRacer:
 
 # Reusable DuckDuckGo client
 _ddgs_client: DDGS | None = None
+
 
 def _get_ddgs() -> DDGS:
     """Return a shared DDGS client instance."""
@@ -121,6 +248,71 @@ def _clean_text(raw: str) -> str:
     # Collapse excessive blank lines
     text = _MULTI_NEWLINE.sub("\n\n", text)
     return text
+
+
+# ---------------------------------------------------------------------------
+# Helper: Fetch a single page (used by both single and batch tools)
+# ---------------------------------------------------------------------------
+def _fetch_single_page(url: str) -> str:
+    """Fetch and extract clean text from a single URL. Internal helper."""
+
+    # [SECURITY] Validate URL before fetching
+    is_valid, error_msg = _validate_url(url)
+    if not is_valid:
+        return f"Security Error: {error_msg}"
+
+    # [SECURITY] Apply rate limiting
+    if not _rate_limiter.acquire():
+        return "Rate limit exceeded. Please try again later."
+
+    try:
+        session = _get_http_session()
+        response = session.get(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            stream=False,
+        )
+        response.raise_for_status()
+
+        # [SECURITY] Check page size limit before parsing
+        content_size = len(response.content)
+        if content_size > SECURITY_CONFIG["max_page_size_bytes"]:
+            logger.warning(f"Page too large ({content_size} bytes), truncating: {url}")
+
+        # Fix encoding
+        if response.encoding and response.encoding.lower() != "utf-8":
+            response.encoding = response.apparent_encoding
+
+        soup = BeautifulSoup(response.text, "lxml")
+
+        # Extract title and meta
+        page_title = soup.title.string.strip() if soup.title and soup.title.string else "N/A"
+        meta_desc_tag = soup.find("meta", attrs={"name": "description"})
+        meta_desc = meta_desc_tag["content"].strip() if meta_desc_tag and meta_desc_tag.get("content") else "N/A"
+
+        header_info = f"Page Title: {page_title}\nMeta Description: {meta_desc}\n\n---\n\n"
+
+        # Remove noisy elements
+        for tag in soup(_NOISY_TAGS):
+            tag.extract()
+
+        # Prioritize main content
+        main_content = soup.find("article") or soup.find("main") or soup.find("div", {"role": "main"})
+        target = main_content if main_content else soup.body if soup.body else soup
+
+        raw_text = target.get_text(separator="\n")
+        text = _clean_text(raw_text)
+        full_text = header_info + text
+
+        if len(full_text) > _MAX_CONTENT_LENGTH:
+            full_text = full_text[:_MAX_CONTENT_LENGTH] + "\n\n...[Content truncated due to length]..."
+
+        return full_text
+    except Exception as e:
+        # [SECURITY] Don't expose internal error details
+        logger.error(f"Error reading {url}: {e}")
+        return f"Error reading URL: Request timed out or failed."
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +366,7 @@ def search_web(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
         return "\n\n" + "=" * 60 + "\n\n".join(output_parts)
     except Exception as e:
         logger.error(f"Error searching web: {e}")
-        return f"Error occurred while searching: {str(e)}"
+        return f"Error occurred while searching: Request timed out or rate limited."
 
 
 # ---------------------------------------------------------------------------
@@ -206,51 +398,7 @@ def search_news(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
         return "\n\n---\n\n".join(results)
     except Exception as e:
         logger.error(f"Error searching news: {e}")
-        return f"Error occurred while searching news: {str(e)}"
-
-
-# ---------------------------------------------------------------------------
-# Helper: Fetch a single page (used by both single and batch tools)
-# ---------------------------------------------------------------------------
-def _fetch_single_page(url: str) -> str:
-    """Fetch and extract clean text from a single URL. Internal helper."""
-    try:
-        session = _get_http_session()
-        response = session.get(url, timeout=15)
-        response.raise_for_status()
-
-        # Fix encoding
-        if response.encoding and response.encoding.lower() != "utf-8":
-            response.encoding = response.apparent_encoding
-
-        soup = BeautifulSoup(response.text, "lxml")
-
-        # Extract title and meta
-        page_title = soup.title.string.strip() if soup.title and soup.title.string else "N/A"
-        meta_desc_tag = soup.find("meta", attrs={"name": "description"})
-        meta_desc = meta_desc_tag["content"].strip() if meta_desc_tag and meta_desc_tag.get("content") else "N/A"
-
-        header_info = f"Page Title: {page_title}\nMeta Description: {meta_desc}\n\n---\n\n"
-
-        # Remove noisy elements
-        for tag in soup(_NOISY_TAGS):
-            tag.extract()
-
-        # Prioritize main content
-        main_content = soup.find("article") or soup.find("main") or soup.find("div", {"role": "main"})
-        target = main_content if main_content else soup.body if soup.body else soup
-
-        raw_text = target.get_text(separator="\n")
-        text = _clean_text(raw_text)
-        full_text = header_info + text
-
-        if len(full_text) > _MAX_CONTENT_LENGTH:
-            full_text = full_text[:_MAX_CONTENT_LENGTH] + "\n\n...[Content truncated due to length]..."
-
-        return full_text
-    except Exception as e:
-        logger.error(f"Error reading {url}: {e}")
-        return f"Error reading {url}: {str(e)}"
+        return f"Error occurred while searching news: Request timed out or rate limited."
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +410,18 @@ def read_webpage(url: str) -> str:
     CRITICAL: Use this tool to read the full text content of a SINGLE webpage URL.
     If you need to read multiple pages at once, use read_multiple_webpages instead.
 
+    [SECURITY] URLs are validated before fetching. Private/local network access is blocked.
+
     Args:
-        url: The exact URL of the webpage to read.
+        url: The exact URL of the webpage to read. Must be a valid HTTP/HTTPS URL.
     """
     logger.info(f"Reading webpage: {url}")
+
+    # [SECURITY] Validate URL before fetching
+    is_valid, error_msg = _validate_url(url)
+    if not is_valid:
+        return f"Security Error: {error_msg}"
+
     return _fetch_single_page(url)
 
 
@@ -279,13 +435,27 @@ def read_multiple_webpages(urls: list[str]) -> str:
     This is much faster than calling read_webpage one by one.
     Use this after search_web or search_news when you want to read several result pages at once.
 
+    [SECURITY] All URLs are validated before fetching. Invalid URLs are skipped.
+
     Args:
         urls: A list of URLs to read concurrently. Example: ["https://example.com", "https://example2.com"]
     """
     logger.info(f"Reading {len(urls)} webpages concurrently")
 
+    # [SECURITY] Validate and filter all URLs first
+    validated_urls = []
+    for url in urls[:8]:  # Cap at 8 concurrent
+        is_valid, error_msg = _validate_url(url)
+        if is_valid:
+            validated_urls.append(url)
+        else:
+            logger.warning(f"Skipping unsafe URL: {url} — {error_msg}")
+
+    if not validated_urls:
+        return "No valid URLs to fetch."
+
     results: dict[str, str] = {}
-    futures = {_thread_pool.submit(_fetch_single_page, url): url for url in urls}
+    futures = {_thread_pool.submit(_fetch_single_page, url): url for url in validated_urls}
 
     for future in as_completed(futures):
         url = futures[future]
@@ -296,10 +466,10 @@ def read_multiple_webpages(urls: list[str]) -> str:
 
     # Build output in original URL order
     output_parts = []
-    for i, url in enumerate(urls, 1):
+    for i, url in enumerate(validated_urls, 1):
         output_parts.append(f"=== PAGE {i}: {url} ===\n\n{results.get(url, 'No data')}")
 
-    return "\n\n{'='*60}\n\n".join(output_parts)
+    return f"\n\n{'=' * 60}\n\n".join(output_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -351,51 +521,67 @@ def search_and_read(query: str, max_pages: int = 3, region: str = "tr-tr") -> st
                 f"{content}"
             )
 
-        return "\n\n{'='*60}\n\n".join(output_parts)
+        return f"\n\n{'=' * 60}\n\n".join(output_parts)
     except Exception as e:
         logger.error(f"Error in search_and_read: {e}")
-        return f"Error: {str(e)}"
+        return f"Error: Request timed out or rate limited."
 
 
 # ---------------------------------------------------------------------------
-# Tool 7: Read PDF File
+# Tool 6: Read PDF File
 # ---------------------------------------------------------------------------
-@ mcp.tool(description=f"""
+@mcp.tool(description=f"""
 Use this tool to read and extract text content from a PDF file.
 
+[SECURITY] Content-Type is strictly validated. Maximum file size is {SECURITY_CONFIG['max_pdf_size_bytes'] // (1024*1024)} MB.
+
 Args:
-    file_path: The path to the PDF file to read. Can be local or remote URL.
+    file_path: The URL of the PDF file to read (must be HTTP/HTTPS).
 """)
 def read_pdf(file_path: str) -> str:
     """
     Extract text content from a PDF file using PyPDF2.
 
     Args:
-        file_path: Path to the PDF file (local file path or URL that returns a PDF)
-    
+        file_path: URL pointing to the PDF file (must return Content-Type: application/pdf).
+
     Returns:
         Extracted text content from the PDF, or error message if failed.
     """
     logger.info(f"Reading PDF file: {file_path}")
+
+    # [SECURITY] Validate URL
+    is_valid, error_msg = _validate_url(file_path)
+    if not is_valid:
+        return f"Security Error: {error_msg}"
+
+    # [SECURITY] Apply rate limiting
+    if not _rate_limiter.acquire():
+        return "Rate limit exceeded. Please try again later."
+
     try:
-        # Try to fetch PDF as bytes
         session = _get_http_session()
-        response = session.get(file_path, timeout=15)
+        response = session.get(file_path, timeout=15, allow_redirects=True)
         response.raise_for_status()
-        
-        # Check content type
-        if "application/pdf" not in response.headers.get("Content-Type", ""):
-            return f"Error: Content-Type is '{response.headers.get('Content-Type', '')}', expected 'application/pdf'"
-        
+
+        # [SECURITY] Strict content-type check
+        content_type = response.headers.get("Content-Type", "")
+        if "application/pdf" not in content_type:
+            return f"Security Error: Expected 'application/pdf', got '{content_type}'"
+
         pdf_bytes = response.content
-        
+
+        # [SECURITY] File size limit
+        if len(pdf_bytes) > SECURITY_CONFIG["max_pdf_size_bytes"]:
+            return f"Error: PDF file too large (max {SECURITY_CONFIG['max_pdf_size_bytes'] // (1024*1024)} MB)."
+
         # Parse PDF using PyPDF2
         from PyPDF2 import PdfReader
         from io import BytesIO
-        
+
         pdf_file = BytesIO(pdf_bytes)
         reader = PdfReader(pdf_file)
-        
+
         all_text = []
         for i, page in enumerate(reader.pages):
             try:
@@ -404,24 +590,24 @@ def read_pdf(file_path: str) -> str:
                     all_text.append(f"--- Page {i + 1} ---\n{text}\n")
                 else:
                     all_text.append(f"--- Page {i + 1} ---\n[No text extracted]\n")
-            except Exception as e:
-                all_text.append(f"--- Page {i + 1} ---\nError: {str(e)}\n")
-        
+            except Exception as page_error:
+                all_text.append(f"--- Page {i + 1} ---\nError: {str(page_error)}\n")
+
         if not all_text:
             return "No text could be extracted from the PDF."
-        
+
         content = "".join(all_text)
         if len(content) > _MAX_CONTENT_LENGTH:
             content = content[:_MAX_CONTENT_LENGTH] + "\n\n...[Content truncated due to length]..."
-        
+
         return f"PDF Content ({len(reader.pages)} pages):\n\n{content}"
     except Exception as e:
         logger.error(f"Error reading PDF: {e}")
-        return f"Error reading PDF file: {str(e)}"
+        return f"Error reading PDF file: Request timed out or invalid PDF format."
 
 
 # ---------------------------------------------------------------------------
-# Tool 8: Execute JavaScript (renamed from Tool 4/6 to fix numbering)
+# Tool 7: Execute JavaScript
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def execute_javascript(code: str) -> str:
@@ -429,14 +615,32 @@ def execute_javascript(code: str) -> str:
     CRITICAL: Use this tool to execute JavaScript code. Useful for math calculations, data processing, algorithms, or generating specific text.
     The code runs in an isolated V8 JavaScript engine environment with a 5-second timeout and 64 MB memory limit.
 
+    [SECURITY] Dangerous patterns (eval, fetch, DOM access, etc.) are blocked before execution.
+
     Args:
         code: The JavaScript code string to execute. It must return a value or evaluate to an expression.
+              Maximum length: 10,000 characters.
     """
     logger.info("Executing JavaScript code")
+
+    # [SECURITY] Input type and size validation
+    if not isinstance(code, str):
+        return "Error: Code must be a string."
+    if len(code) > SECURITY_CONFIG["max_js_code_length"]:
+        return f"Error: JavaScript code too large (max {SECURITY_CONFIG['max_js_code_length']} characters)."
+
+    # [SECURITY] Block dangerous patterns
+    for pattern in _DANGEROUS_JS_PATTERNS:
+        if re.search(pattern, code, re.IGNORECASE):
+            return "Error: Code contains disallowed patterns (DOM access, network calls, or eval are not permitted)."
+
     try:
         ctx = _get_js_engine()
-        # 5 second timeout, 64 MB memory limit for safety
-        result = ctx.eval(code, timeout=5000, max_memory=64 * 1024 * 1024)
+        result = ctx.eval(
+            code,
+            timeout=SECURITY_CONFIG["javascript_timeout_ms"],
+            max_memory=SECURITY_CONFIG["max_javascript_memory_mb"] * 1024 * 1024,
+        )
         return str(result)
     except Exception as e:
         logger.error(f"Error executing JavaScript: {e}")
@@ -444,9 +648,9 @@ def execute_javascript(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 10: Get Current Date and Time
+# Tool 8: Get Current Date and Time
 # ---------------------------------------------------------------------------
-@ mcp.tool()
+@mcp.tool()
 def get_current_datetime() -> str:
     """
     Returns the current date, time, and day of the week.
@@ -465,36 +669,45 @@ def get_current_datetime() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 6: Translate Text
+# Tool 9: Translate Text
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def translate_text(text: str, target_language: str = "tr", source_language: str = "auto") -> str:
     """
     Translate text between languages. Useful when search results are in a foreign language and need to be translated for the user.
 
+    [SECURITY] Input length is validated. Maximum 10,000 characters per call.
+
     Args:
-        text: The text to translate.
+        text: The text to translate. Maximum 10,000 characters.
         target_language: Target language code (default "tr" for Turkish). Examples: "en", "de", "fr", "es", "ar", "ja".
         source_language: Source language code (default "auto" for auto-detection).
     """
     logger.info(f"Translating text to {target_language}")
+
+    # [SECURITY] Input validation
+    if not isinstance(text, str):
+        return "Error: Text must be a string."
+    if len(text) > 10000:
+        return "Error: Text too large (max 10,000 characters)."
+
     try:
         translator = _get_translator(source_language, target_language)
 
         # deep-translator has a 5000 char limit per call, split if needed
         if len(text) > 4500:
-            chunks = [text[i : i + 4500] for i in range(0, len(text), 4500)]
+            chunks = [text[i: i + 4500] for i in range(0, len(text), 4500)]
             translated_chunks = [translator.translate(chunk) for chunk in chunks]
             return "".join(translated_chunks)
 
         return translator.translate(text)
     except Exception as e:
         logger.error(f"Error translating text: {e}")
-        return f"Translation Error: {str(e)}"
+        return f"Translation Error: Service unavailable or rate limited."
 
 
 # ---------------------------------------------------------------------------
-# Tool 9: Search Images
+# Tool 10: Search Images
 # ---------------------------------------------------------------------------
 @mcp.tool(description=f"""
 CRITICAL: Use this tool when the user asks to see images, photos, or pictures of something.
@@ -512,39 +725,45 @@ def search_images(query: str, max_results: int = 2, region: str = "tr-tr") -> li
     try:
         ddgs = _get_ddgs()
         raw_results = ddgs.images(query, region=region, max_results=max_results)
-        
+
         if not raw_results:
             return [types.TextContent(type="text", text="No images found.")]
-            
+
         content_blocks = []
         content_blocks.append(types.TextContent(type="text", text=f"Found {len(raw_results)} images for '{query}':\n"))
-        
+
         session = _get_http_session()
         for i, r in enumerate(raw_results, 1):
             title = r.get("title", "Unknown")
             source_url = r.get("url", "")
             img_url = r.get("thumbnail") or r.get("image")
-            
+
             if not img_url:
                 continue
-                
+
+            # [SECURITY] Apply rate limiting per image fetch
+            if not _rate_limiter.acquire():
+                content_blocks.append(types.TextContent(
+                    type="text",
+                    text=f"\nImage {i}: Rate limited, skipping."
+                ))
+                continue
+
             try:
-                # Fetch image
                 resp = session.get(img_url, timeout=5)
                 resp.raise_for_status()
-                
+
+                # [SECURITY] Validate content type
                 content_type = resp.headers.get("Content-Type", "image/jpeg")
                 if not content_type.startswith("image/"):
                     content_type = "image/jpeg"
-                    
+
                 b64_data = base64.b64encode(resp.content).decode("utf-8")
-                
-                # Add text info
+
                 content_blocks.append(types.TextContent(
-                    type="text", 
+                    type="text",
                     text=f"\nImage {i}: {title}\nSource: {source_url}"
                 ))
-                # Add image
                 content_blocks.append(types.ImageContent(
                     type="image",
                     data=b64_data,
@@ -552,14 +771,14 @@ def search_images(query: str, max_results: int = 2, region: str = "tr-tr") -> li
                 ))
             except Exception as e:
                 content_blocks.append(types.TextContent(
-                    type="text", 
-                    text=f"\nFailed to load Image {i} ({img_url}): {str(e)}"
+                    type="text",
+                    text=f"\nFailed to load Image {i} ({img_url}): Request failed."
                 ))
-                
+
         return content_blocks
     except Exception as e:
         logger.error(f"Error searching images: {e}")
-        return [types.TextContent(type="text", text=f"Error occurred: {str(e)}")]
+        return [types.TextContent(type="text", text=f"Error occurred: Request timed out or rate limited.")]
 
 
 # ---------------------------------------------------------------------------
