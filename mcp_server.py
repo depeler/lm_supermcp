@@ -17,10 +17,10 @@ import re
 import sys
 import time
 import logging
+import threading
 from datetime import datetime, timezone
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -56,7 +56,6 @@ SECURITY_CONFIG = {
     "max_javascript_memory_mb": 64,
     "javascript_timeout_ms": 5000,
     "max_js_code_length": 10000,
-    "redirect_limit": 5,
     "user_agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -93,7 +92,7 @@ class RateLimiter:
     def __init__(self, requests_per_minute: int):
         self.requests_per_minute = requests_per_minute
         self.timestamps: list[float] = []
-        self._lock = __import__("threading").Lock()
+        self._lock = threading.Lock()
 
     def _cleanup(self) -> None:
         one_minute_ago = time.time() - 60
@@ -124,7 +123,7 @@ _rate_limiter = RateLimiter(SECURITY_CONFIG["requests_per_minute"])
 # ---------------------------------------------------------------------------
 # URL Validator
 # ---------------------------------------------------------------------------
-def _validate_url(url: str) -> tuple[bool, Optional[str]]:
+def _validate_url(url: str) -> tuple[bool, str | None]:
     """Validate a URL for security. Returns (is_valid, error_message)."""
     if not isinstance(url, str) or not url.strip():
         return False, "URL must be a non-empty string."
@@ -346,7 +345,7 @@ def search_web(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
             url = futures[future]
             try:
                 page_contents[url] = future.result()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 page_contents[url] = f"Error: {str(e)}"
 
         # Build combined output: snippet + full page content
@@ -461,8 +460,8 @@ def read_multiple_webpages(urls: list[str]) -> str:
         url = futures[future]
         try:
             results[url] = future.result()
-        except Exception as e:
-            results[url] = f"Error reading {url}: {str(e)}"
+        except Exception as exc:
+            results[url] = f"Error reading {url}: {str(exc)}"
 
     # Build output in original URL order
     output_parts = []
@@ -769,15 +768,15 @@ def search_images(query: str, max_results: int = 2, region: str = "tr-tr") -> li
                     data=b64_data,
                     mimeType=content_type
                 ))
-            except Exception as e:
+            except Exception:
                 content_blocks.append(types.TextContent(
                     type="text",
                     text=f"\nFailed to load Image {i} ({img_url}): Request failed."
                 ))
 
         return content_blocks
-    except Exception as e:
-        logger.error(f"Error searching images: {e}")
+    except Exception as exc:
+        logger.error(f"Error searching images: {exc}")
         return [types.TextContent(type="text", text=f"Error occurred: Request timed out or rate limited.")]
 
 
