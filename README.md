@@ -1,6 +1,6 @@
-# LM Studio Web Browser & JS MCP Server
+# LM Studio Web Browser, JS & PDF MCP Server
 
-Bu proje, LM Studio'da çalışan yerel modellerin **internette arama yapabilmesi**, **web sitelerinden bilgi okuyabilmesi**, **haber takibi yapabilmesi**, **JavaScript kodları çalıştırabilmesi** ve **çeviri yapabilmesi** için geliştirilmiş performans odaklı ve kapsamlı bir **Model Context Protocol (MCP)** sunucusudur.
+Bu proje, LM Studio'da çalışan yerel modellerin **internette arama yapabilmesi**, **web sitelerinden bilgi okuyabilmesi**, **haber takibi yapabilmesi**, **JavaScript kodları çalıştırabilmesi**, **PDF dosyalarını okuyabilmesi** ve **çeviri yapabilmesi** için geliştirilmiş performans odaklı ve kapsamlı bir **Model Context Protocol (MCP)** sunucusudur.
 
 ## Son Güncellemeler (Performans ve Güvenilirlik)
 - **Paralel İşleme:** `ThreadPoolExecutor` sayesinde çoklu sayfalar eş zamanlı (paralel) okunarak hız 3-5 kat artırıldı.
@@ -19,7 +19,7 @@ Bu proje, LM Studio'da çalışan yerel modellerin **internette arama yapabilmes
 | 6 | `execute_javascript` | V8 motoru üzerinde güvenli (5sn timeout, 64MB RAM) JS kodu çalıştırır. |
 | 7 | `get_current_datetime` | Anlık tarih, saat ve gün bilgisini verir (model çoğu zaman bunu açıklamadan kendi anlar). |
 | 8 | `translate_text` | Metni istenilen dile çevirir (varsayılan: Türkçe). |
-| 9 | `search_images` | (YENİ) İnternette görsel araması yapar ve bulduğu fotoğrafları doğrudan modelin gözlerine (görsel hafızasına) gönderir. |
+| 10 | `read_pdf` | (YENİ) PDF dosyalarının metin içeriğini çıkarır ve modeli okuma/yazma becerileri için sunar. |
 
 ## Kurulum
 
@@ -66,10 +66,11 @@ Bu MCP sunucusunu LM Studio'ya eklemek için:
 Modelin araçları inat etmeden, aktif olarak kullanabilmesi için LM Studio'daki **System Prompt** alanına şunu yapıştırın:
 
 ```text
-Sen güncel internete doğrudan bağlı olan gelişmiş bir yapay zekasın. Canlı internete erişimin, JavaScript çalıştırma yeteneğin, çeviri aracın ve KULLANICIYA GÖRSEL/FOTOĞRAF GÖSTERME yeteneğin var.
-ASLA "Ben bir yapay zekayım, güncel bilgileri bilemem", "Gerçek zamanlı bilgiye erişemem" veya "Doğrudan görsel/fotoğraf paylaşamam" GİBİ CÜMLELER KURMA! Bu kesinlikle yasaktır. Sen araçlarını (tools) kullanarak bunları yapabilirsin.
+Sen güncel internete doğrudan bağlı olan gelişmiş bir yapay zekasın. Canlı internete erişimin, JavaScript çalıştırma yeteneğin, çeviri aracın, KULLANICIYA GÖRSEL/FOTOĞRAF GÖSTERME yeteneğin ve **PDF dosyalarını okuma** yeteneğin var.
+ASLA "Ben bir yapay zekayım, güncel bilgileri bilemem", "Gerçek zamanlı bilgiye erişemem", "PDF dosyasını okuyamam" veya "Doğrudan görsel/fotoğraf paylaşamam" GİBİ CÜMLELER KURMA! Bu kesinlikle yasaktır. Sen araçlarını (tools) kullanarak bunları yapabilirsin.
 - Bilmediğin veya güncel olan bir şey sorulduğunda ZORUNLU OLARAK "search_web", "search_news" veya "search_and_read" aracını kullan.
 - Kullanıcı senden bir fotoğraf veya görsel görmek istediğinde ZORUNLU OLARAK "search_images" aracını kullan. Bu araç senin yerine kullanıcıya fotoğrafı doğrudan gösterecektir.
+- PDF okuma talebi geldiğinde ZORUNLU OLARAK `read_pdf` aracını kullan (PDF dosyasının yolunu veya URL'yi ver).
 - Hesaplama veya algoritma gerektiğinde "execute_javascript" ile kod çalıştır.
 - Yabancı dildeki metinleri çevirmek için "translate_text" kullan.
 ```
