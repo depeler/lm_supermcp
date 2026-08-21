@@ -2,6 +2,14 @@
 
 Tüm önemli değişiklikler burada belgelenmiştir.
 
+## [3.3] - 2026-08-21
+
+### Dinamik Tarih ve Zaman Bildirimi 🕒
+- **Otomatik Zaman Enjeksiyonu (`_get_datetime_header`)**: Tüm MCP araçlarının dönüşlerinin en başına güncel yerel tarih/saat, gün adı ve UTC zaman bilgisi eklendi. LLM her araç çalıştığında ek bir sorgu yapmaya gerek kalmadan kesin güncel zamanı öğrenir.
+- **Fiyat Arama Tablo Formatı**: `search_prices` sonuçları her zaman standart Markdown tablosu ve 'Satın Alma Linki' sütunu ile sunulacak şekilde standartlaştırıldı.
+
+---
+
 ## [3.2] - 2026-08-21
 
 ### Fiyat Arama ve Karşılaştırma Özelliği 💰

@@ -150,9 +150,21 @@ check("Guesses merchant name from subdomain URL", _guess_merchant_name("https://
 
 print()
 print("=" * 55)
+print("7. _get_datetime_header() Tests")
+print("=" * 55)
+
+_get_datetime_header = ns["_get_datetime_header"]
+header = _get_datetime_header()
+check("Generates header with Current DateTime", "[Current DateTime:" in header)
+check("Contains UTC timestamp", "UTC:" in header)
+
+
+print()
+print("=" * 55)
 total = passed + failed
 print(f"Results: {passed}/{total} tests passed" + (" — ALL OK" if failed == 0 else f" — {failed} FAILED"))
 print("=" * 55)
 
 sys.exit(0 if failed == 0 else 1)
+
 

@@ -236,6 +236,19 @@ _thread_pool = ThreadPoolExecutor(max_workers=8)
 
 
 # ---------------------------------------------------------------------------
+# Helper: Dynamic DateTime Header for LLM Context
+# ---------------------------------------------------------------------------
+def _get_datetime_header() -> str:
+    """Return current date, time, and day information as a header string for tool responses."""
+    now = datetime.now()
+    utc_now = datetime.now(timezone.utc)
+    day_tr = _DAYS_TR.get(now.strftime("%A"), now.strftime("%A"))
+    return (
+        f"[Current DateTime: {now.strftime('%Y-%m-%d %H:%M:%S')} (Day: {day_tr} / {now.strftime('%A')}) | UTC: {utc_now.strftime('%Y-%m-%d %H:%M:%S')}]\n\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helper: Clean extracted text
 # ---------------------------------------------------------------------------
 def _clean_text(raw: str) -> str:
@@ -362,7 +375,7 @@ def search_web(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
                 f"--- Full Page Content ---\n{content}"
             )
 
-        return "\n\n" + "=" * 60 + "\n\n".join(output_parts)
+        return _get_datetime_header() + "=" * 60 + "\n\n" + "\n\n".join(output_parts)
     except Exception as e:
         logger.error(f"Error searching web: {e}")
         return f"Error occurred while searching: Request timed out or rate limited."
@@ -387,13 +400,13 @@ def search_news(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
         raw_results = ddgs.news(query, region=region, max_results=max_results)
 
         if not raw_results:
-            return "No news articles found."
+            return _get_datetime_header() + "No news articles found."
 
         results = [
             f"Title: {r.get('title')}\nSource: {r.get('source')}\nDate: {r.get('date')}\nURL: {r.get('url')}\nSnippet: {r.get('body')}"
             for r in raw_results
         ]
-        return "\n\n---\n\n".join(results)
+        return _get_datetime_header() + "\n\n---\n\n".join(results)
     except Exception as e:
         logger.error(f"Error searching news: {e}")
         return f"Error occurred while searching news: Request timed out or rate limited."
@@ -417,7 +430,7 @@ def read_webpage(url: str) -> str:
     if not is_valid:
         return f"Security Error: {error_msg}"
 
-    return _fetch_single_page(url)
+    return _get_datetime_header() + _fetch_single_page(url)
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +473,7 @@ def read_multiple_webpages(urls: list[str]) -> str:
     for i, url in enumerate(validated_urls, 1):
         output_parts.append(f"=== PAGE {i}: {url} ===\n\n{results.get(url, 'No data')}")
 
-    return f"\n\n{'=' * 60}\n\n".join(output_parts)
+    return _get_datetime_header() + f"\n\n{'=' * 60}\n\n".join(output_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +498,7 @@ def search_and_read(query: str, max_pages: int = 3, region: str = "tr-tr") -> st
         search_results = ddgs.text(query, region=region, max_results=max_pages)
 
         if not search_results:
-            return "No search results found."
+            return _get_datetime_header() + "No search results found."
 
         urls = [r.get("href") for r in search_results if r.get("href")]
 
@@ -512,7 +525,7 @@ def search_and_read(query: str, max_pages: int = 3, region: str = "tr-tr") -> st
                 f"{content}"
             )
 
-        return f"\n\n{'=' * 60}\n\n".join(output_parts)
+        return _get_datetime_header() + f"\n\n{'=' * 60}\n\n".join(output_parts)
     except Exception as e:
         logger.error(f"Error in search_and_read: {e}")
         return f"Error: Request timed out or rate limited."
@@ -575,13 +588,13 @@ def read_pdf(file_path: str) -> str:
                 all_text.append(f"--- Page {i + 1} ---\nError: {str(page_error)}\n")
 
         if not all_text:
-            return "No text could be extracted from the PDF."
+            return _get_datetime_header() + "No text could be extracted from the PDF."
 
         content = "".join(all_text)
         if len(content) > _MAX_CONTENT_LENGTH:
             content = content[:_MAX_CONTENT_LENGTH] + "\n\n...[Content truncated due to length]..."
 
-        return f"PDF Content ({len(reader.pages)} pages):\n\n{content}"
+        return _get_datetime_header() + f"PDF Content ({len(reader.pages)} pages):\n\n{content}"
     except Exception as e:
         logger.error(f"Error reading PDF: {e}")
         return f"Error reading PDF file: Request timed out or invalid PDF format."
@@ -618,7 +631,7 @@ def execute_javascript(code: str) -> str:
             timeout=SECURITY_CONFIG["javascript_timeout_ms"],
             max_memory=SECURITY_CONFIG["max_javascript_memory_mb"] * 1024 * 1024,
         )
-        return str(result)
+        return _get_datetime_header() + str(result)
     except Exception as e:
         logger.error(f"Error executing JavaScript: {e}")
         return f"JavaScript Execution Error: {str(e)}"
@@ -672,9 +685,9 @@ def translate_text(text: str, target_language: str = "tr", source_language: str 
         if len(text) > 4500:
             chunks = [text[i: i + 4500] for i in range(0, len(text), 4500)]
             translated_chunks = [translator.translate(chunk) for chunk in chunks]
-            return "".join(translated_chunks)
+            return _get_datetime_header() + "".join(translated_chunks)
 
-        return translator.translate(text)
+        return _get_datetime_header() + translator.translate(text)
     except Exception as e:
         logger.error(f"Error translating text: {e}")
         return f"Translation Error: Service unavailable or rate limited."
@@ -700,10 +713,10 @@ def search_images(query: str, max_results: int = 2, region: str = "tr-tr") -> li
         raw_results = ddgs.images(query, region=region, max_results=max_results)
 
         if not raw_results:
-            return [types.TextContent(type="text", text="No images found.")]
+            return [types.TextContent(type="text", text=_get_datetime_header() + "No images found.")]
 
         content_blocks = []
-        content_blocks.append(types.TextContent(type="text", text=f"Found {len(raw_results)} images for '{query}':\n"))
+        content_blocks.append(types.TextContent(type="text", text=_get_datetime_header() + f"Found {len(raw_results)} images for '{query}':\n"))
 
         session = _get_http_session()
         for i, r in enumerate(raw_results, 1):
@@ -876,7 +889,7 @@ def search_prices(
         raw_results = ddgs.text(search_query, region=region, max_results=max_results)
 
         if not raw_results:
-            return f"No price results found for '{query}' with scope '{effective_scope}'."
+            return _get_datetime_header() + f"No price results found for '{query}' with scope '{effective_scope}'."
 
         # Collect URLs and fetch brief snippets/pages in parallel for accurate price extraction
         urls = [r.get("href") for r in raw_results if r.get("href")]
@@ -932,7 +945,7 @@ def search_prices(
             "\n".join(detailed_findings)
         ]
 
-        return "\n".join(output)
+        return _get_datetime_header() + "\n".join(output)
 
     except Exception as exc:
         logger.error(f"Error searching prices: {exc}")
