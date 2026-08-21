@@ -84,15 +84,15 @@ To add this MCP server to LM Studio:
 1. Open LM Studio.
 2. Go to **Settings** (or the MCP / Integrations tab) on the menu.
 3. Navigate to **MCP Servers** -> **Edit mcp.json**.
-4. Configure `mcp.json` using the **absolute path to the virtual environment Python interpreter**:
+4. Configure `mcp.json` using the **absolute path to your virtual environment Python interpreter**:
 
    ```json
    {
      "mcpServers": {
        "web-and-js-tools": {
-         "command": "D:/Projects/lm_supermcp/venv/Scripts/python.exe",
+         "command": "C:/path/to/lm_supermcp/venv/Scripts/python.exe",
          "args": [
-           "D:/Projects/lm_supermcp/mcp_server.py"
+           "C:/path/to/lm_supermcp/mcp_server.py"
          ]
        }
      }
