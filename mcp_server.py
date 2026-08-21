@@ -817,6 +817,7 @@ def search_prices(
 ) -> str:
     """
     Search and compare product prices locally (Turkey) or globally (worldwide).
+    ALWAYS returns prices formatted in a clean markdown table with the purchase link in the last column.
 
     Args:
         query: The product name or search query (e.g. 'iPhone 15 128GB', 'RTX 4070 Ti').
@@ -910,24 +911,24 @@ def search_prices(
             clean_merchant = merchant.replace("|", "-").strip()
             clean_price = price_display.replace("|", "-").strip()
 
-            rows.append(f"| {i} | {clean_merchant} | {clean_title} | **{clean_price}** | [Link]({url}) |")
+            rows.append(f"| {i} | {clean_merchant} | {clean_title} | **{clean_price}** | [Satın Al / İncele]({url}) |")
 
             detailed_findings.append(
                 f"### {i}. {clean_merchant}: {title}\n"
-                f"- **URL:** {url}\n"
-                f"- **Detected Prices:** {price_display}\n"
-                f"- **Summary:** {snippet}\n"
+                f"- **Satın Alma Linki:** {url}\n"
+                f"- **Bulunan Fiyat:** {price_display}\n"
+                f"- **Özet:** {snippet}\n"
             )
 
-        scope_label = "Türkiye (Local)" if effective_scope == "tr" else "Global (Worldwide)"
+        scope_label = "Türkiye (Yerel)" if effective_scope == "tr" else "Global (Dünya Çapı)"
         output = [
-            f"## 🔎 Price Search & Comparison: '{query}'",
-            f"**Scope:** {scope_label} | **Results Found:** {len(raw_results)}\n",
-            "| # | Store / Merchant | Product Title | Detected Price | Link |",
-            "|---|-------------------|---------------|----------------|------|",
+            f"## 🔎 Fiyat Karşılaştırma Tablosu: '{query}'",
+            f"**Kapsam:** {scope_label} | **Bulunan Sonuç:** {len(raw_results)}\n",
+            "| # | Mağaza / Satıcı | Ürün Başlığı | Fiyat | Satın Alma Linki |",
+            "|---|-----------------|--------------|-------|------------------|",
             *rows,
             "\n---\n",
-            "### 📋 Detailed Store Listings\n",
+            "### 📋 Mağaza ve Ürün Detayları\n",
             "\n".join(detailed_findings)
         ]
 
