@@ -830,7 +830,8 @@ def search_prices(
 ) -> str:
     """
     Search and compare product prices locally (Turkey) or globally (worldwide).
-    ALWAYS returns prices formatted in a clean markdown table with the purchase link in the last column.
+    Returns a structured price comparison table containing the Store Name, Product Title, Price, and Direct Purchase URL.
+    The caller/model should present this table and the direct purchase links directly to the user.
 
     Args:
         query: The product name or search query (e.g. 'iPhone 15 128GB', 'RTX 4070 Ti').
@@ -916,7 +917,7 @@ def search_prices(
             # Combine snippet and page preview for price extraction
             combined_text = f"{title}\n{snippet}\n{page_text[:1500]}"
             prices = _extract_prices_from_text(combined_text, scope=effective_scope)
-            price_display = ", ".join(prices[:2]) if prices else "See link"
+            price_display = ", ".join(prices[:2]) if prices else "Linke Bakınız"
             merchant = _guess_merchant_name(url)
 
             # Sanitize table columns (escape markdown pipes)
@@ -924,11 +925,13 @@ def search_prices(
             clean_merchant = merchant.replace("|", "-").strip()
             clean_price = price_display.replace("|", "-").strip()
 
-            rows.append(f"| {i} | {clean_merchant} | {clean_title} | **{clean_price}** | [Satın Al / İncele]({url}) |")
+            # Include explicit URL markdown link
+            link_markdown = f"[{clean_merchant} Satın Alma Linki]({url})"
+            rows.append(f"| {i} | {clean_merchant} | {clean_title} | **{clean_price}** | {link_markdown} |")
 
             detailed_findings.append(
                 f"### {i}. {clean_merchant}: {title}\n"
-                f"- **Satın Alma Linki:** {url}\n"
+                f"- **Satın Alma / Ürün Linki:** {url}\n"
                 f"- **Bulunan Fiyat:** {price_display}\n"
                 f"- **Özet:** {snippet}\n"
             )
@@ -941,7 +944,7 @@ def search_prices(
             "|---|-----------------|--------------|-------|------------------|",
             *rows,
             "\n---\n",
-            "### 📋 Mağaza ve Ürün Detayları\n",
+            "### 📋 Satın Alma Linkleri ve Mağaza Detayları\n",
             "\n".join(detailed_findings)
         ]
 
