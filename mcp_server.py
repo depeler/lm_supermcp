@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -196,10 +197,10 @@ def _get_js_engine() -> MiniRacer:
 
 
 # Reusable DuckDuckGo client
-_ddgs_client: DDGS | None = None
+_ddgs_client: Any = None
 
 
-def _get_ddgs() -> DDGS:
+def _get_ddgs() -> Any:
     """Return a shared DDGS client instance."""
     global _ddgs_client
     if _ddgs_client is None:
@@ -317,17 +318,16 @@ def _fetch_single_page(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Tool 1: Web Search
 # ---------------------------------------------------------------------------
-@mcp.tool(description=f"""
-CRITICAL: Use this tool ALWAYS when you need to search the internet for current events, real-time information, news, or facts you do not know.
-This searches the web AND automatically reads all result pages in parallel, giving you full content immediately.
-[SYSTEM NOTE: Today's date is {_TODAY}. Keep this in mind when searching for recent events.]
-
-Args:
-    query: The search query string. Keep it concise for better results.
-    max_results: Maximum number of results to return (default 5).
-    region: Region code for localized results (default "tr-tr").
-""")
+@mcp.tool()
 def search_web(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
+    """
+    Search the web for real-time information, news, or general facts, and extract relevant page contents.
+
+    Args:
+        query: The search query string.
+        max_results: Maximum number of search results to return (default: 5).
+        region: Region code for localized results (e.g. 'tr-tr', 'wt-wt', 'us-en').
+    """
     logger.info(f"Searching web for: {query} (region={region})")
     try:
         ddgs = _get_ddgs()
@@ -371,17 +371,16 @@ def search_web(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
 # ---------------------------------------------------------------------------
 # Tool 2: News Search
 # ---------------------------------------------------------------------------
-@mcp.tool(description=f"""
-CRITICAL: Use this tool when the user asks about recent news, breaking events, or current affairs.
-This searches specifically in news sources for the most up-to-date articles.
-[SYSTEM NOTE: Today's date is {_TODAY}.]
-
-Args:
-    query: The news search query string.
-    max_results: Maximum number of news articles to return (default 5).
-    region: Region code for localized news (default "tr-tr").
-""")
+@mcp.tool()
 def search_news(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
+    """
+    Search specifically in news sources for recent news articles and current affairs.
+
+    Args:
+        query: The news search query.
+        max_results: Maximum number of news articles to return (default: 5).
+        region: Region code for localized news (default: 'tr-tr').
+    """
     logger.info(f"Searching news for: {query} (region={region})")
     try:
         ddgs = _get_ddgs()
@@ -406,13 +405,10 @@ def search_news(query: str, max_results: int = 5, region: str = "tr-tr") -> str:
 @mcp.tool()
 def read_webpage(url: str) -> str:
     """
-    CRITICAL: Use this tool to read the full text content of a SINGLE webpage URL.
-    If you need to read multiple pages at once, use read_multiple_webpages instead.
-
-    [SECURITY] URLs are validated before fetching. Private/local network access is blocked.
+    Fetch and read the full text content of a single webpage URL.
 
     Args:
-        url: The exact URL of the webpage to read. Must be a valid HTTP/HTTPS URL.
+        url: The full HTTP/HTTPS URL of the webpage to read.
     """
     logger.info(f"Reading webpage: {url}")
 
@@ -430,14 +426,10 @@ def read_webpage(url: str) -> str:
 @mcp.tool()
 def read_multiple_webpages(urls: list[str]) -> str:
     """
-    CRITICAL: Use this tool to read MULTIPLE webpages AT THE SAME TIME in parallel.
-    This is much faster than calling read_webpage one by one.
-    Use this after search_web or search_news when you want to read several result pages at once.
-
-    [SECURITY] All URLs are validated before fetching. Invalid URLs are skipped.
+    Read multiple webpages simultaneously in parallel.
 
     Args:
-        urls: A list of URLs to read concurrently. Example: ["https://example.com", "https://example2.com"]
+        urls: List of webpage URLs to read concurrently.
     """
     logger.info(f"Reading {len(urls)} webpages concurrently")
 
@@ -474,16 +466,16 @@ def read_multiple_webpages(urls: list[str]) -> str:
 # ---------------------------------------------------------------------------
 # Tool 5: Search and Read (all-in-one)
 # ---------------------------------------------------------------------------
-@mcp.tool(description=f"""
-CRITICAL: Use this tool for comprehensive research. It searches the web AND reads the top result pages in parallel, all in one step.
-[SYSTEM NOTE: Today's date is {_TODAY}.]
-
-Args:
-    query: The search query string.
-    max_pages: How many of the top search results to read in full (default 3, max 5).
-    region: Region code for localized results (default "tr-tr").
-""")
+@mcp.tool()
 def search_and_read(query: str, max_pages: int = 3, region: str = "tr-tr") -> str:
+    """
+    Search the web and read the top resulting pages in parallel in a single step.
+
+    Args:
+        query: The search query.
+        max_pages: Number of top search results to fetch and read (default: 3, max: 5).
+        region: Region code for localized results (default: 'tr-tr').
+    """
     logger.info(f"Search-and-read for: {query} (top {max_pages} pages)")
     max_pages = min(max_pages, 5)  # Safety cap
 
@@ -529,23 +521,13 @@ def search_and_read(query: str, max_pages: int = 3, region: str = "tr-tr") -> st
 # ---------------------------------------------------------------------------
 # Tool 6: Read PDF File
 # ---------------------------------------------------------------------------
-@mcp.tool(description=f"""
-Use this tool to read and extract text content from a PDF file.
-
-[SECURITY] Content-Type is strictly validated. Maximum file size is {SECURITY_CONFIG['max_pdf_size_bytes'] // (1024*1024)} MB.
-
-Args:
-    file_path: The URL of the PDF file to read (must be HTTP/HTTPS).
-""")
+@mcp.tool()
 def read_pdf(file_path: str) -> str:
     """
-    Extract text content from a PDF file using PyPDF2.
+    Extract text content from a remote PDF file URL.
 
     Args:
-        file_path: URL pointing to the PDF file (must return Content-Type: application/pdf).
-
-    Returns:
-        Extracted text content from the PDF, or error message if failed.
+        file_path: HTTP/HTTPS URL of the PDF file to read.
     """
     logger.info(f"Reading PDF file: {file_path}")
 
@@ -611,14 +593,10 @@ def read_pdf(file_path: str) -> str:
 @mcp.tool()
 def execute_javascript(code: str) -> str:
     """
-    CRITICAL: Use this tool to execute JavaScript code. Useful for math calculations, data processing, algorithms, or generating specific text.
-    The code runs in an isolated V8 JavaScript engine environment with a 5-second timeout and 64 MB memory limit.
-
-    [SECURITY] Dangerous patterns (eval, fetch, DOM access, etc.) are blocked before execution.
+    Execute JavaScript code in a secure sandboxed V8 engine.
 
     Args:
         code: The JavaScript code string to execute. It must return a value or evaluate to an expression.
-              Maximum length: 10,000 characters.
     """
     logger.info("Executing JavaScript code")
 
@@ -652,8 +630,7 @@ def execute_javascript(code: str) -> str:
 @mcp.tool()
 def get_current_datetime() -> str:
     """
-    Returns the current date, time, and day of the week.
-    Use this when the user asks about today's date, the current time, or when you need temporal context for searches.
+    Get the current local and UTC date, time, and day of the week.
     """
     now = datetime.now()
     utc_now = datetime.now(timezone.utc)
@@ -673,14 +650,12 @@ def get_current_datetime() -> str:
 @mcp.tool()
 def translate_text(text: str, target_language: str = "tr", source_language: str = "auto") -> str:
     """
-    Translate text between languages. Useful when search results are in a foreign language and need to be translated for the user.
-
-    [SECURITY] Input length is validated. Maximum 10,000 characters per call.
+    Translate text between languages.
 
     Args:
-        text: The text to translate. Maximum 10,000 characters.
-        target_language: Target language code (default "tr" for Turkish). Examples: "en", "de", "fr", "es", "ar", "ja".
-        source_language: Source language code (default "auto" for auto-detection).
+        text: The text to translate (max 10,000 characters).
+        target_language: Target language code (e.g. 'tr', 'en', 'de', 'fr', 'es').
+        source_language: Source language code (default 'auto' for detection).
     """
     logger.info(f"Translating text to {target_language}")
 
@@ -708,17 +683,16 @@ def translate_text(text: str, target_language: str = "tr", source_language: str 
 # ---------------------------------------------------------------------------
 # Tool 10: Search Images
 # ---------------------------------------------------------------------------
-@mcp.tool(description=f"""
-CRITICAL: Use this tool when the user asks to see images, photos, or pictures of something.
-This searches the web for images and returns them directly into your vision context.
-[SYSTEM NOTE: Today's date is {_TODAY}.]
-
-Args:
-    query: The image search query.
-    max_results: Number of images to fetch (default 2, max 4).
-    region: Region code (default "tr-tr").
-""")
+@mcp.tool()
 def search_images(query: str, max_results: int = 2, region: str = "tr-tr") -> list:
+    """
+    Search for images on the web and return them.
+
+    Args:
+        query: The image search query.
+        max_results: Number of images to fetch (default: 2, max: 4).
+        region: Region code (default: 'tr-tr').
+    """
     logger.info(f"Searching images for: {query}")
     max_results = min(max_results, 4)
     try:

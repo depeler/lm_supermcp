@@ -4,6 +4,10 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 
 ## Recent Updates
 
+### v3.1 — Local LLM & Tool Calling Compatibility
+- **Clean Standardized MCP Prompts:** Streamlined tool descriptions to eliminate aggressive prompting conflicts (`CRITICAL/ALWAYS` directives) that caused local models (Llama, Mistral, Qwen) to generate empty responses.
+- **Enhanced LM Studio Integration:** Documented specific virtual environment configuration paths to prevent `Exit Code 1` startup failures.
+
 ### v3.0 — Security Hardening
 - **Rate Limiting:** Thread-safe `RateLimiter` class enforces a maximum of 30 requests/minute across all tools to prevent DoS conditions.
 - **URL Validation:** New `_validate_url()` helper blocks dangerous schemes (`file://`, `javascript:`, `ftp://`), private/local network access (`localhost`, `127.x`, `192.168.x`), and malicious URL patterns before any HTTP request is made.
@@ -16,7 +20,6 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 ### v2.0 — Performance and Reliability
 - **Parallel Processing:** Using `ThreadPoolExecutor`, reading multiple pages simultaneously has increased speed by 3–5×.
 - **Document Support:** Added comprehensive PDF reading capabilities alongside web content processing for diverse data ingestion.
-- **Date Injection:** The system date is dynamically embedded into tool descriptions so the model automatically knows today's date.
 - **ddgs Library:** Migrated to the latest search engine package (`ddgs`) to avoid rate-limit and 403 errors.
 
 ## Tools
@@ -79,36 +82,38 @@ Expected output: `34/34 tests passed — ALL OK`
 To add this MCP server to LM Studio:
 
 1. Open LM Studio.
-2. Go to **Program** (or Settings) in the right-side menu.
+2. Go to **Settings** (or the MCP / Integrations tab) on the menu.
 3. Navigate to **MCP Servers** -> **Edit mcp.json**.
-4. Edit `mcp.json` file using absolute paths as shown below:
+4. Configure `mcp.json` using the **absolute path to the virtual environment Python interpreter**:
 
    ```json
    {
      "mcpServers": {
        "web-and-js-tools": {
-         "command": "YOUR_PATH_TO_PYTHON/Scripts/python.exe",
+         "command": "D:/Projects/lm_supermcp/venv/Scripts/python.exe",
          "args": [
-           "YOUR_PATH_TO_PROJECT/mcp_server.py"
+           "D:/Projects/lm_supermcp/mcp_server.py"
          ]
        }
      }
    }
    ```
 
-   *Note: On Windows, use forward slashes (`/`) instead of backslashes (`\`).*
+   *Note: On Windows, always use forward slashes (`/`) in JSON paths.*
 
 ## Recommended System Prompt
 
-Paste the following into LM Studio's **System Prompt** field so the model actively uses the tools without resistance:
+Paste the following into LM Studio's **System Prompt** field so the model knows its capabilities and seamlessly uses the tools:
 
 ```text
-You are an advanced AI with direct access to the live internet. You have the ability to run JavaScript, translate text, process documents (including PDFs), and show VISUAL/PHOTOS TO THE USER. NEVER say phrases like "I am an AI and cannot access real-time information", "I don't have real-time information access", or "I cannot directly share visual/photos". You CAN use your tools for these tasks.
+You are an intelligent AI assistant equipped with specialized tools for web browsing, current news, remote PDF document reading, real-time date/time queries, and JavaScript execution.
 
-- When asked about something you don't know or that's current, REQUIRED: use the "search_web", "search_news", or "search_and_read" tool.
-- When a user wants to see a photo or image, REQUIRED: use the "search_images" tool. This will display the photo directly to the user.
-- For calculations or algorithmic tasks, run code using "execute_javascript".
-- Use "translate_text" for translating text in foreign languages.
+- For queries about current events, breaking news, or unknown facts, use the "search_web", "search_news", or "search_and_read" tools.
+- When asked for the current date or time, use the "get_current_datetime" tool.
+- For reading webpage content or remote PDF files, use "read_webpage" or "read_pdf".
+- For calculations or code execution, use "execute_javascript".
+- For translations, use "translate_text".
+- For visual queries or image requests, use "search_images".
 ```
 
 ## Usage Examples

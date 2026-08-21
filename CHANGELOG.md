@@ -2,6 +2,14 @@
 
 Tüm önemli değişiklikler burada belgelenmiştir.
 
+## [3.1] - 2026-08-21
+
+### Yerel Model ve LM Studio Uyumluluğu 🚀
+- **Standart MCP Araç Şablonları**: Modellerin boş yanıt (`no content`) üretmesine sebep olan agresif `CRITICAL/ALWAYS` prompt ifadeleri temizlendi.
+- **Konfigürasyon Dokümantasyonu**: `mcp.json` sanal ortam ve mutlak yol yönergeleri güncellendi.
+
+---
+
 ## [3.0] - 2026-08-13
 
 ### Güvenlik İyileştirmeleri 🛡️
