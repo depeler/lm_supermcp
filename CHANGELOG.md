@@ -2,6 +2,15 @@
 
 Tüm önemli değişiklikler burada belgelenmiştir.
 
+## [3.2] - 2026-08-21
+
+### Fiyat Arama ve Karşılaştırma Özelliği 💰
+- **`search_prices` MCP Aracı**: Ürünler için yerel (Türkiye) ve dünya çapında (Global) fiyat araması ve karşılaştırması yapabilen yeni araç eklendi.
+- **Otomatik Kapsam Algılama (`scope="auto"`)**: Girilen sorgu veya para birimine göre yurt içi / yurt dışı pazar yerlerini otomatik tespit etme.
+- **Yapılandırılmış Çıktı**: Mağaza adı, ürün başlığı, bulunan fiyatlar ve bağlantıları içeren Markdown karşılaştırma tablosu ve detay listesi.
+
+---
+
 ## [3.1] - 2026-08-21
 
 ### Yerel Model ve LM Studio Uyumluluğu 🚀

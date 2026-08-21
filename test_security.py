@@ -130,8 +130,29 @@ check("Strips leading/trailing whitespace per line",
 
 print()
 print("=" * 55)
+print("6. Price Extraction & Helper Tests")
+print("=" * 55)
+
+_extract_prices_from_text = ns["_extract_prices_from_text"]
+_guess_merchant_name = ns["_guess_merchant_name"]
+
+tr_text = "Ürün fiyatı 14.999 TL ve kargo dahil 15.250,50 ₺ olarak satılmaktadır."
+tr_prices = _extract_prices_from_text(tr_text, scope="tr")
+check("Extracts Turkish Lira prices", len(tr_prices) >= 2 and any("14.999 TL" in p for p in tr_prices))
+
+global_text = "The item costs $299.99 or €275 and £240 on official stores."
+global_prices = _extract_prices_from_text(global_text, scope="global")
+check("Extracts Global currency prices ($/€/£)", len(global_prices) >= 3 and any("$299.99" in p for p in global_prices))
+
+check("Guesses merchant name from standard URL", _guess_merchant_name("https://www.hepsiburada.com/urun-p-123") == "Hepsiburada")
+check("Guesses merchant name from subdomain URL", _guess_merchant_name("https://amazon.com.tr/dp/B001") == "Amazon")
+
+
+print()
+print("=" * 55)
 total = passed + failed
 print(f"Results: {passed}/{total} tests passed" + (" — ALL OK" if failed == 0 else f" — {failed} FAILED"))
 print("=" * 55)
 
 sys.exit(0 if failed == 0 else 1)
+

@@ -4,6 +4,10 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 
 ## Recent Updates
 
+### v3.2 — Price Search & Comparison
+- **`search_prices` Tool:** Added multi-scope product price research and comparison tool supporting both Turkish domestic stores (Trendyol, Hepsiburada, Akakçe, Amazon TR) and global marketplaces (Amazon, eBay, BestBuy, etc.).
+- **Automatic Scope Detection:** Automatically determines whether to search locally or globally based on currency and product query context.
+
 ### v3.1 — Local LLM & Tool Calling Compatibility
 - **Clean Standardized MCP Prompts:** Streamlined tool descriptions to eliminate aggressive prompting conflicts (`CRITICAL/ALWAYS` directives) that caused local models (Llama, Mistral, Qwen) to generate empty responses.
 - **Enhanced LM Studio Integration:** Documented specific virtual environment configuration paths to prevent `Exit Code 1` startup failures.
@@ -36,6 +40,7 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 | 8 | `get_current_datetime` | Provides current date, time, and day information. |
 | 9 | `translate_text` | Translates text to the desired language (default: Turkish). Input length is validated (max 10,000 chars). |
 | 10 | `search_images` | Performs image search on the internet and sends found images directly to the model's visual memory. |
+| 11 | `search_prices` | Searches and compares product prices locally (Turkey) or globally (worldwide) with structured store & price listings. |
 
 ## Security Overview
 

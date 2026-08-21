@@ -253,7 +253,7 @@ def _clean_text(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # Helper: Fetch a single page (used by both single and batch tools)
 # ---------------------------------------------------------------------------
-def _fetch_single_page(url: str) -> str:
+def _fetch_single_page(url: str, timeout: int = 15) -> str:
     """Fetch and extract clean text from a single URL. Internal helper."""
 
     # [SECURITY] Validate URL before fetching
@@ -269,7 +269,7 @@ def _fetch_single_page(url: str) -> str:
         session = _get_http_session()
         response = session.get(
             url,
-            timeout=15,
+            timeout=timeout,
             allow_redirects=True,
             stream=False,
         )
@@ -752,6 +752,190 @@ def search_images(query: str, max_results: int = 2, region: str = "tr-tr") -> li
     except Exception as exc:
         logger.error(f"Error searching images: {exc}")
         return [types.TextContent(type="text", text=f"Error occurred: Request timed out or rate limited.")]
+
+
+# ---------------------------------------------------------------------------
+# Helper: Extract price and merchant info from text/url
+# ---------------------------------------------------------------------------
+_PRICE_REGEX_TR = re.compile(
+    r"(?:[\d]{1,3}(?:\.[\d]{3})*(?:,[\d]{1,2})?|\d+(?:,\d{1,2})?)\s*(?:TL|₺|TRY|tl)",
+    re.IGNORECASE
+)
+_PRICE_REGEX_GLOBAL = re.compile(
+    r"(?:\$|€|£|USD|EUR|GBP)\s*(?:\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)|(?:\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)\s*(?:\$|€|£|USD|EUR|GBP)",
+    re.IGNORECASE
+)
+
+
+def _extract_prices_from_text(text: str, scope: str = "auto") -> list[str]:
+    """Extract price mentions from text based on scope."""
+    found: list[str] = []
+    if scope in ("tr", "local"):
+        found.extend(_PRICE_REGEX_TR.findall(text))
+    elif scope in ("global", "worldwide"):
+        found.extend(_PRICE_REGEX_GLOBAL.findall(text))
+    else:  # auto / both
+        found.extend(_PRICE_REGEX_TR.findall(text))
+        found.extend(_PRICE_REGEX_GLOBAL.findall(text))
+
+    # Clean and deduplicate while preserving order
+    cleaned = []
+    seen = set()
+    for p in found:
+        p_clean = " ".join(p.strip().split())
+        if p_clean and p_clean not in seen:
+            seen.add(p_clean)
+            cleaned.append(p_clean)
+    return cleaned
+
+
+def _guess_merchant_name(url: str) -> str:
+    """Extract a friendly merchant/website name from URL domain."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        # Remove www. and domain extensions
+        parts = hostname.split(".")
+        if len(parts) >= 2:
+            if parts[0] == "www":
+                return parts[1].capitalize()
+            return parts[0].capitalize()
+        return hostname or "Web"
+    except Exception:
+        return "Web"
+
+
+# ---------------------------------------------------------------------------
+# Tool 11: Price Search & Comparison
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def search_prices(
+    query: str,
+    scope: str = "auto",
+    currency: str = "",
+    max_results: int = 5,
+) -> str:
+    """
+    Search and compare product prices locally (Turkey) or globally (worldwide).
+
+    Args:
+        query: The product name or search query (e.g. 'iPhone 15 128GB', 'RTX 4070 Ti').
+        scope: Search scope. Options:
+            - 'auto': Automatically detects region based on query and currency (default).
+            - 'tr' or 'local': Searches Turkish stores (Trendyol, Hepsiburada, Amazon TR, Akakçe, etc.).
+            - 'global' or 'worldwide': Searches international stores (Amazon, eBay, BestBuy, Newegg, etc.).
+        currency: Optional preferred currency filter (e.g. 'TRY', 'USD', 'EUR').
+        max_results: Maximum number of stores/results to return (default: 5, max: 10).
+    """
+    # [SECURITY] Input sanitization
+    if not query or not query.strip():
+        return "Please provide a valid product name or search query."
+
+    query = query.strip()
+    max_results = max(1, min(max_results, 10))
+    scope_lower = scope.lower().strip()
+
+    # Determine effective scope
+    if scope_lower in ("tr", "local", "turkey"):
+        effective_scope = "tr"
+    elif scope_lower in ("global", "worldwide", "international", "world"):
+        effective_scope = "global"
+    else:
+        # Auto detect based on currency or query keywords
+        tr_hints = ["tl", "₺", "try", "türkiye", "turkey", "fiyat", "fiyatı", "kaç para", "satın al"]
+        global_hints = ["usd", "eur", "gbp", "$", "€", "£", "price", "buy", "worldwide", "global"]
+
+        query_lower = query.lower()
+        curr_lower = currency.lower()
+
+        if any(h in curr_lower for h in ["try", "tl", "₺"]) or any(h in query_lower for h in tr_hints):
+            effective_scope = "tr"
+        elif any(h in curr_lower for h in ["usd", "eur", "gbp", "$", "€", "£"]) or any(h in query_lower for h in global_hints):
+            effective_scope = "global"
+        else:
+            effective_scope = "tr"  # Default to local if indeterminate
+
+    # [SECURITY] Apply rate limiting
+    if not _rate_limiter.acquire():
+        return "Rate limit exceeded. Please try again later."
+
+    # Build targeted search query and set region
+    if effective_scope == "tr":
+        region = "tr-tr"
+        search_query = f"{query} fiyat satın al"
+    else:
+        region = "wt-wt"
+        currency_suffix = f" {currency}" if currency else ""
+        search_query = f"{query} price buy online store{currency_suffix}"
+
+    logger.info(f"Searching prices for '{query}' (scope={effective_scope}, region={region})")
+
+    try:
+        ddgs = _get_ddgs()
+        raw_results = ddgs.text(search_query, region=region, max_results=max_results)
+
+        if not raw_results:
+            return f"No price results found for '{query}' with scope '{effective_scope}'."
+
+        # Collect URLs and fetch brief snippets/pages in parallel for accurate price extraction
+        urls = [r.get("href") for r in raw_results if r.get("href")]
+        page_contents: dict[str, str] = {}
+        futures = {_thread_pool.submit(_fetch_single_page, url, 6): url for url in urls}
+
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                page_contents[url] = future.result()
+            except Exception as e:  # noqa: BLE001
+                page_contents[url] = ""
+
+        # Format price comparison table and details
+        rows = []
+        detailed_findings = []
+
+        for i, r in enumerate(raw_results, 1):
+            url = r.get("href", "")
+            title = r.get("title", "N/A")
+            snippet = r.get("body", "")
+            page_text = page_contents.get(url, "")
+
+            # Combine snippet and page preview for price extraction
+            combined_text = f"{title}\n{snippet}\n{page_text[:1500]}"
+            prices = _extract_prices_from_text(combined_text, scope=effective_scope)
+            price_display = ", ".join(prices[:2]) if prices else "See link"
+            merchant = _guess_merchant_name(url)
+
+            # Sanitize table columns (escape markdown pipes)
+            clean_title = title.replace("|", "-").strip()
+            clean_merchant = merchant.replace("|", "-").strip()
+            clean_price = price_display.replace("|", "-").strip()
+
+            rows.append(f"| {i} | {clean_merchant} | {clean_title} | **{clean_price}** | [Link]({url}) |")
+
+            detailed_findings.append(
+                f"### {i}. {clean_merchant}: {title}\n"
+                f"- **URL:** {url}\n"
+                f"- **Detected Prices:** {price_display}\n"
+                f"- **Summary:** {snippet}\n"
+            )
+
+        scope_label = "Türkiye (Local)" if effective_scope == "tr" else "Global (Worldwide)"
+        output = [
+            f"## 🔎 Price Search & Comparison: '{query}'",
+            f"**Scope:** {scope_label} | **Results Found:** {len(raw_results)}\n",
+            "| # | Store / Merchant | Product Title | Detected Price | Link |",
+            "|---|-------------------|---------------|----------------|------|",
+            *rows,
+            "\n---\n",
+            "### 📋 Detailed Store Listings\n",
+            "\n".join(detailed_findings)
+        ]
+
+        return "\n".join(output)
+
+    except Exception as exc:
+        logger.error(f"Error searching prices: {exc}")
+        return "Error occurred while searching for prices: Request timed out or service unavailable."
 
 
 # ---------------------------------------------------------------------------
