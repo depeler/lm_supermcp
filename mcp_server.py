@@ -1273,14 +1273,48 @@ def deep_research(
         # Build output Markdown
         header_title = f"🔬 ÇOK YÖNLÜ DERİN ARAŞTIRMA & AKIL YÜRÜTME RAPORU" if is_turkish else "🔬 MULTI-ANGLE DEEP RESEARCH & REASONING REPORT"
         sub_info = (
-            f"**Araştırılan Konu:** `{topic}` | **Derinlik:** `{depth_clean.upper()}` | **İncelenen Kaynak Sayısı:** `{stats['sources_count']}` ({stats['unique_domains']} farklı domain)"
+            f"**Araştırılan Konu:** `{topic}` | **Derinlik Modu:** `{depth_clean.upper()}` | **İncelenen Toplam Kaynak:** `{stats['sources_count']}` ({stats['unique_domains']} farklı domain)"
             if is_turkish
-            else f"**Research Topic:** `{topic}` | **Depth:** `{depth_clean.upper()}` | **Sources Analyzed:** `{stats['sources_count']}` ({stats['unique_domains']} unique domains)"
+            else f"**Research Topic:** `{topic}` | **Depth Mode:** `{depth_clean.upper()}` | **Total Sources Analyzed:** `{stats['sources_count']}` ({stats['unique_domains']} unique domains)"
         )
+
+        # Section 0: Research Methodology & Trace Log (İzlenen Yöntemler ve Aşamalar)
+        if is_turkish:
+            methodology_items = []
+            for idx, a in enumerate(angle_definitions, 1):
+                methodology_items.append(
+                    f"  {idx}. **{a['angle']}**: `{a['query']}` *(Amacı: {a.get('description', '')})*"
+                )
+
+            methodology_section = (
+                "## 🛠️ İzlenen Araştırma Yöntemi & Yürütülen Aşamalar\n"
+                "1. **🔍 Çok Boyutlu Sorgu Ayrıştırma:** Konu bağımsız 5 farklı kritik araştırma perspektifine bölündü:\n"
+                + "\n".join(methodology_items) + "\n\n"
+                f"2. **⚡ Paralel Web Taraması:** DuckDuckGo ve Concurrent HTTP Workers ile toplam **{len(unique_urls)} benzersiz bağlantı** eş zamanlı ziyaret edildi.\n"
+                f"3. **💾 Geçici SQLite Bellek İndeksi (`:memory:`):** Toplanan tüm kaynaklar tekilleştirildi, `{stats['unique_domains']}` farklı domain filtrelendi ve içerikler yapısal olarak sınıflandırıldı.\n"
+                "4. **⚖️ Karşılaştırmalı Çıkarım & Sentezleme:** Elde edilen bulgular, benzer alternatiflerle karşılaştırma ve fikir birliği analizine tabi tutuldu.\n"
+            )
+        else:
+            methodology_items = []
+            for idx, a in enumerate(angle_definitions, 1):
+                methodology_items.append(
+                    f"  {idx}. **{a['angle']}**: `{a['query']}` *(Goal: {a.get('description', '')})*"
+                )
+
+            methodology_section = (
+                "## 🛠️ Executed Research Methodology & Trace\n"
+                "1. **🔍 Multi-Perspective Query Decomposition:** Deconstructed the research topic into distinct analytical angles:\n"
+                + "\n".join(methodology_items) + "\n\n"
+                f"2. **⚡ Parallel Web Ingestion:** Concurrently fetched and parsed **{len(unique_urls)} unique URLs** using pooled HTTP workers.\n"
+                f"3. **💾 In-Memory SQLite Aggregation (`:memory:`):** Deduplicated entries across `{stats['unique_domains']}` domains and indexed findings structurally.\n"
+                "4. **⚖️ Comparative Synthesis & Reasoning:** Clustered pros/cons, trade-offs, and competitor benchmarks into actionable insights.\n"
+            )
 
         sections: list[str] = [
             f"# {header_title}\n",
             sub_info,
+            "\n---\n",
+            methodology_section,
             "\n---\n",
             "## 🧭 1. Boyutsal Bulgular ve Perspektif Analizi\n" if is_turkish else "## 🧭 1. Multi-Angle Perspectives & Findings\n"
         ]
