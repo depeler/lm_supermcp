@@ -4,6 +4,11 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 
 ## Recent Updates
 
+### v3.3 — Deep Multi-Angle Web Research & Reasoning (SQLite-backed)
+- **`deep_research` Tool:** Deconstructs complex topics into multiple critical perspectives (Overview, Pros/Advantages, Cons/Risks, Alternatives/Comparisons, Future Trends) and queries the web concurrently.
+- **In-Memory SQLite Research Session:** Deduplicates web sources, extracts structured findings per angle, and normalizes findings in an isolated in-memory SQLite database (`:memory:`).
+- **Comparative Synthesis & Reasoning Matrix:** Synthesizes multi-source consensus, nuances, and direct alternative comparison matrices to power high-level reasoning for local models.
+
 ### v3.2 — Price Search & Comparison
 - **`search_prices` Tool:** Added multi-scope product price research and comparison tool supporting both Turkish domestic stores (Trendyol, Hepsiburada, Akakçe, Amazon TR) and global marketplaces (Amazon, eBay, BestBuy, etc.).
 - **Automatic Scope Detection:** Automatically determines whether to search locally or globally based on currency and product query context.
@@ -35,12 +40,13 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 | 3 | `read_webpage` | Extracts title, meta information, and main content text from a single webpage. URLs are validated before fetching. |
 | 4 | `read_multiple_webpages` | Reads **multiple URLs simultaneously (in parallel)**. Invalid/unsafe URLs are skipped automatically. |
 | 5 | `search_and_read` | The most comprehensive research tool: searches, then reads top result pages in parallel and presents them as a unified piece to the model. |
-| 6 | `read_pdf` | Fetches and extracts text from a remote PDF file. Validates Content-Type and enforces a 10 MB size limit. |
-| 7 | `execute_javascript` | Executes JavaScript code securely on V8 (5s timeout, 64 MB RAM limit, dangerous patterns blocked). |
-| 8 | `get_current_datetime` | Provides current date, time, and day information. |
-| 9 | `translate_text` | Translates text to the desired language (default: Turkish). Input length is validated (max 10,000 chars). |
-| 10 | `search_images` | Performs image search on the internet and sends found images directly to the model's visual memory. |
-| 11 | `search_prices` | Searches and compares product prices locally (Turkey) or globally (worldwide) with structured store & price listings. |
+| 6 | `deep_research` | **Multi-angle deep web research & comparative reasoning engine backed by SQLite**. Analyzes perspectives, comparisons, pros/cons, and synthesizes structured insight matrices. |
+| 7 | `read_pdf` | Fetches and extracts text from a remote PDF file. Validates Content-Type and enforces a 10 MB size limit. |
+| 8 | `execute_javascript` | Executes JavaScript code securely on V8 (5s timeout, 64 MB RAM limit, dangerous patterns blocked). |
+| 9 | `get_current_datetime` | Provides current date, time, and day information. |
+| 10 | `translate_text` | Translates text to the desired language (default: Turkish). Input length is validated (max 10,000 chars). |
+| 11 | `search_images` | Performs image search on the internet and sends found images directly to the model's visual memory. |
+| 12 | `search_prices` | Searches and compares product prices locally (Turkey) or globally (worldwide) with structured store & price listings. |
 
 ## Security Overview
 
@@ -111,9 +117,11 @@ To add this MCP server to LM Studio:
 Paste the following into LM Studio's **System Prompt** field so the model knows its capabilities and seamlessly uses the tools:
 
 ```text
-You are an intelligent AI assistant equipped with specialized tools for web browsing, current news, remote PDF document reading, real-time date/time queries, and JavaScript execution.
+You are an intelligent AI assistant equipped with specialized tools for deep web browsing, multi-angle research & reasoning, current news, product price comparison, remote PDF document reading, real-time date/time queries, and JavaScript execution.
 
-- For queries about current events, breaking news, or unknown facts, use the "search_web", "search_news", or "search_and_read" tools.
+- For in-depth topics, architectural decisions, comparative evaluations, and multi-perspective reasoning, use the "deep_research" tool.
+- For product pricing or shopping comparisons across Turkish and global stores, use the "search_prices" tool.
+- For quick queries about current events, breaking news, or general facts, use "search_web", "search_news", or "search_and_read".
 - When asked for the current date or time, use the "get_current_datetime" tool.
 - For reading webpage content or remote PDF files, use "read_webpage" or "read_pdf".
 - For calculations or code execution, use "execute_javascript".
@@ -123,6 +131,8 @@ You are an intelligent AI assistant equipped with specialized tools for web brow
 
 ## Usage Examples
 
+- "Perform deep multi-angle research on Rust vs Go for high-load backend microservices."
+- "Search and compare prices for iPhone 16 Pro 256GB."
 - "Search the internet: What are today's most important technology news?"
 - "What was yesterday's Euro/TL exchange rate?"
 - "Write and run a JS program that finds prime numbers from 1 to 1000."

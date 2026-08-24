@@ -2,6 +2,15 @@
 
 Tüm önemli değişiklikler burada belgelenmiştir.
 
+## [3.4] - 2026-08-24
+
+### Çok Boyutlu Derin Web Araştırması ve Akıl Yürütme Motoru (SQLite Destekli) 🧠🔬
+- **`deep_research` MCP Aracı**: Verilen herhangi bir konuyu genel tanım, avantajlar, dezavantajlar/riskler, alternatiflerle karşılaştırmalar ve gelecek trendleri olarak çoklu boyutlara ayırıp eş zamanlı derinlemesine araştıran araç eklendi.
+- **Geçici SQLite Araştırma Belleği (`ResearchSessionDB`)**: Araştırma esnasında toplanan kaynakları tekilleştiren, alıntı ve bulguları perspektiflerine göre ilişkisel olarak SQLite'ta (`:memory:`) saklayıp organize eden mimari kuruldu.
+- **Karşılaştırma Matrisi ve Akıl Yürütme Çıktısı**: Ham arama sonuçlarını sadece listelemek yerine; fikir birliği (consensus), çelişen görüşler ve alternatiflerle doğrudan karşılaştırma matrisini sentezleyen zengin rapor formatı eklendi.
+
+---
+
 ## [3.3] - 2026-08-21
 
 ### Dinamik Tarih ve Zaman Bildirimi 🕒

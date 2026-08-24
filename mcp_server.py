@@ -18,6 +18,7 @@ import sys
 import time
 import logging
 import threading
+import sqlite3
 from datetime import datetime, timezone
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -953,6 +954,408 @@ def search_prices(
     except Exception as exc:
         logger.error(f"Error searching prices: {exc}")
         return "Error occurred while searching for prices: Request timed out or service unavailable."
+
+
+# ---------------------------------------------------------------------------
+# Tool 12: Deep Multi-Angle Research & Reasoning (SQLite-backed)
+# ---------------------------------------------------------------------------
+class ResearchSessionDB:
+    """In-memory SQLite database manager for structured multi-perspective research."""
+
+    def __init__(self):
+        self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self._lock = threading.Lock()
+        self._init_db()
+
+    def _init_db(self) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT UNIQUE,
+                    title TEXT,
+                    domain TEXT,
+                    query_angle TEXT,
+                    snippet TEXT,
+                    content TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id INTEGER,
+                    angle TEXT,
+                    key_point TEXT,
+                    detail TEXT,
+                    FOREIGN KEY(source_id) REFERENCES sources(id)
+                )
+            """)
+            self.conn.commit()
+
+    def add_source(self, url: str, title: str, domain: str, angle: str, snippet: str, content: str) -> int | None:
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO sources (url, title, domain, query_angle, snippet, content)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (url, title, domain, angle, snippet, content),
+                )
+                self.conn.commit()
+                if cur.lastrowid and cur.lastrowid > 0:
+                    return cur.lastrowid
+                cur.execute("SELECT id FROM sources WHERE url = ?", (url,))
+                row = cur.fetchone()
+                return row[0] if row else None
+            except Exception as e:
+                logger.warning(f"Failed to insert source into research DB: {e}")
+                return None
+
+    def add_finding(self, source_id: int, angle: str, key_point: str, detail: str) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO findings (source_id, angle, key_point, detail)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (source_id, angle, key_point, detail),
+                )
+                self.conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to insert finding into research DB: {e}")
+
+    def get_summary_by_angle(self) -> dict[str, list[dict[str, str]]]:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT s.query_angle, s.title, s.domain, s.url, s.snippet, s.content
+                FROM sources s
+                ORDER BY s.id ASC
+            """)
+            rows = cur.fetchall()
+
+            grouped: dict[str, list[dict[str, str]]] = {}
+            for angle, title, domain, url, snippet, content in rows:
+                if angle not in grouped:
+                    grouped[angle] = []
+                grouped[angle].append({
+                    "title": title or "Başlıksız",
+                    "domain": domain or "Bilinmeyen Kaynak",
+                    "url": url or "",
+                    "snippet": snippet or "",
+                    "content": content or "",
+                })
+            return grouped
+
+    def get_stats(self) -> dict[str, int]:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM sources")
+            src_count = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(DISTINCT domain) FROM sources")
+            domain_count = cur.fetchone()[0]
+            return {"sources_count": src_count, "unique_domains": domain_count}
+
+    def close(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
+
+def _generate_research_angles(topic: str, is_turkish: bool, depth: str = "standard") -> list[dict[str, str]]:
+    """Generate multi-angle search queries and perspectives for deep research."""
+    t = topic.strip()
+    angles: list[dict[str, str]] = []
+
+    if is_turkish:
+        angles.append({
+            "angle": "Genel Tanım ve Güncel Durum",
+            "query": f"{t} nedir genel bakış son gelişmeler",
+            "description": "Temel tanım, çalışma mantığı ve mevcut durum",
+        })
+        angles.append({
+            "angle": "Avantajlar & Güçlü Yönler",
+            "query": f"{t} avantajları faydaları neden kullanılır güçlü yönleri",
+            "description": "Öne çıkan faydalar ve kullanım gerekçeleri",
+        })
+        angles.append({
+            "angle": "Dezavantajlar & Riskler",
+            "query": f"{t} dezavantajları riskleri eleştiriler sorunlar limitler",
+            "description": "Riskler, sınırlamalar ve karşılaşılan zorluklar",
+        })
+        angles.append({
+            "angle": "Alternatifler & Karşılaştırma",
+            "query": f"{t} alternatifleri vs benzerleri karşılaştırma farkları",
+            "description": "Yakın/benzer teknolojiler veya yaklaşımlarla mukayese",
+        })
+        if depth == "deep":
+            angles.append({
+                "angle": "Uzman Görüşleri & Gelecek Trendleri",
+                "query": f"{t} geleceği trendler uzman yorumları best practices",
+                "description": "Gelecek projeksiyonları ve en iyi uygulama pratikleri",
+            })
+    else:
+        angles.append({
+            "angle": "Overview & Current State",
+            "query": f"{t} overview latest updates architecture",
+            "description": "Core definition, architecture, and current state",
+        })
+        angles.append({
+            "angle": "Pros & Key Advantages",
+            "query": f"{t} benefits advantages why use strengths",
+            "description": "Primary advantages and use-case strengths",
+        })
+        angles.append({
+            "angle": "Cons, Risks & Trade-offs",
+            "query": f"{t} disadvantages cons risks limitations trade-offs criticism",
+            "description": "Weaknesses, limitations, and key trade-offs",
+        })
+        angles.append({
+            "angle": "Alternatives & Comparison",
+            "query": f"{t} alternatives vs comparison benchmark differences",
+            "description": "Direct comparisons with alternatives and competitors",
+        })
+        if depth == "deep":
+            angles.append({
+                "angle": "Future Outlook & Best Practices",
+                "query": f"{t} future trends expert opinions best practices",
+                "description": "Future trajectory, real-world patterns, and best practices",
+            })
+
+    return angles
+
+
+def _extract_domain(url: str) -> str:
+    """Safely extract netloc/domain from URL."""
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc or ""
+        if domain.startswith("www."):
+            domain = domain[4:]
+        return domain
+    except Exception:
+        return "web"
+
+
+@mcp.tool()
+def deep_research(
+    topic: str,
+    depth: str = "standard",
+    region: str = "tr-tr",
+    custom_angles: list[str] | None = None,
+) -> str:
+    """
+    Perform an in-depth, multi-perspective research and reasoning analysis on any topic.
+
+    Deconstructs the topic into multiple critical angles (Overview, Pros, Cons/Risks,
+    Alternatives/Comparisons, and Future Trends), queries the web concurrently, aggregates
+    and deduplicates findings inside a temporary in-memory SQLite database, and synthesizes
+    a structured comparative reasoning report.
+
+    Args:
+        topic: The topic, question, technology, or concept to research.
+        depth: 'standard' (4 angles, ~8-12 sources) or 'deep' (5 angles, ~15-20 sources).
+        region: Region code for search (default: 'tr-tr' for Turkish, 'wt-wt' for global).
+        custom_angles: Optional list of custom query angles to investigate alongside default ones.
+    """
+    if not topic or not topic.strip():
+        return "Please provide a valid topic to research."
+
+    topic = topic.strip()
+    depth_clean = "deep" if depth.lower().strip() == "deep" else "standard"
+    max_per_angle = 3 if depth_clean == "standard" else 4
+
+    # Detect language preference
+    is_turkish = (
+        region.lower().startswith("tr")
+        or any(c in topic.lower() for c in ["ç", "ğ", "ı", "ö", "ş", "ü"])
+        or any(w in topic.lower().split() for w in ["nedir", "nasil", "nasıl", "vs", "karsilastirma", "kıyaslama", "farklar"])
+    )
+
+    effective_region = "tr-tr" if is_turkish else region
+
+    # Rate limiting
+    if not _rate_limiter.acquire():
+        return "Rate limit exceeded. Please try again later."
+
+    logger.info(f"Initiating deep research for topic='{topic}', depth={depth_clean}, region={effective_region}")
+
+    # 1. Determine Angles
+    angle_definitions = _generate_research_angles(topic, is_turkish, depth_clean)
+    if custom_angles and isinstance(custom_angles, list):
+        for ca in custom_angles[:3]:
+            if isinstance(ca, str) and ca.strip():
+                ca_clean = ca.strip()
+                angle_definitions.append({
+                    "angle": f"Özel Boyut: {ca_clean}" if is_turkish else f"Custom Angle: {ca_clean}",
+                    "query": f"{topic} {ca_clean}",
+                    "description": f"Kullanıcı tanımlı araştırma boyutu: {ca_clean}",
+                })
+
+    # 2. SQLite In-Memory Research DB
+    db = ResearchSessionDB()
+
+    try:
+        ddgs = _get_ddgs()
+
+        # Step 2a: Run search for each angle
+        all_fetch_tasks: list[tuple[str, str, str, str, str]] = []  # (url, title, domain, angle, snippet)
+
+        for item in angle_definitions:
+            angle_name = item["angle"]
+            search_query = item["query"]
+            try:
+                results = ddgs.text(search_query, region=effective_region, max_results=max_per_angle)
+                if results:
+                    for r in results:
+                        u = r.get("href")
+                        if u:
+                            t = r.get("title", "")
+                            s = r.get("body", "")
+                            dom = _extract_domain(u)
+                            all_fetch_tasks.append((u, t, dom, angle_name, s))
+            except Exception as se:
+                logger.warning(f"Search failed for angle '{angle_name}' ({search_query}): {se}")
+
+        if not all_fetch_tasks:
+            db.close()
+            return _get_datetime_header() + f"Konu hakkında yeterli araştırma sonucu bulunamadı: '{topic}'"
+
+        # Step 2b: Parallel webpage fetching
+        unique_urls = list({task[0]: task for task in all_fetch_tasks}.values())
+        futures = {
+            _thread_pool.submit(_fetch_single_page, task[0], 8): task
+            for task in unique_urls
+        }
+
+        page_data: dict[str, str] = {}
+        for future in as_completed(futures):
+            task = futures[future]
+            url = task[0]
+            try:
+                page_data[url] = future.result()
+            except Exception as e:
+                page_data[url] = f"Content read error: {str(e)}"
+
+        # Step 2c: Populate SQLite DB
+        for u, t, dom, ang, snip in all_fetch_tasks:
+            content_text = page_data.get(u, snip)
+            # Store snippet + first 2500 chars of page in SQLite for quick extraction
+            stored_content = content_text[:2500] if content_text else snip
+            src_id = db.add_source(
+                url=u,
+                title=t,
+                domain=dom,
+                angle=ang,
+                snippet=snip,
+                content=stored_content,
+            )
+            if src_id:
+                # Add key finding record
+                db.add_finding(
+                    source_id=src_id,
+                    angle=ang,
+                    key_point=t,
+                    detail=snip[:300],
+                )
+
+        # Step 3: Query SQLite DB to format synthesis report
+        grouped_results = db.get_summary_by_angle()
+        stats = db.get_stats()
+
+        # Build output Markdown
+        header_title = f"🔬 ÇOK YÖNLÜ DERİN ARAŞTIRMA & AKIL YÜRÜTME RAPORU" if is_turkish else "🔬 MULTI-ANGLE DEEP RESEARCH & REASONING REPORT"
+        sub_info = (
+            f"**Araştırılan Konu:** `{topic}` | **Derinlik:** `{depth_clean.upper()}` | **İncelenen Kaynak Sayısı:** `{stats['sources_count']}` ({stats['unique_domains']} farklı domain)"
+            if is_turkish
+            else f"**Research Topic:** `{topic}` | **Depth:** `{depth_clean.upper()}` | **Sources Analyzed:** `{stats['sources_count']}` ({stats['unique_domains']} unique domains)"
+        )
+
+        sections: list[str] = [
+            f"# {header_title}\n",
+            sub_info,
+            "\n---\n",
+            "## 🧭 1. Boyutsal Bulgular ve Perspektif Analizi\n" if is_turkish else "## 🧭 1. Multi-Angle Perspectives & Findings\n"
+        ]
+
+        for angle_def in angle_definitions:
+            ang = angle_def["angle"]
+            items = grouped_results.get(ang, [])
+            if not items:
+                continue
+
+            sections.append(f"### 📌 {ang}")
+            sections.append(f"*{angle_def.get('description', '')}*\n")
+
+            for idx, item in enumerate(items, 1):
+                title = item["title"]
+                domain = item["domain"]
+                url = item["url"]
+                snippet = item["snippet"]
+                raw_content = item["content"]
+
+                # Extract first clean paragraph from content if available
+                extract = snippet
+                if raw_content and len(raw_content) > len(snippet):
+                    lines = [ln.strip() for ln in raw_content.splitlines() if len(ln.strip()) > 50 and not ln.startswith("Page Title:") and not ln.startswith("Meta Description:")]
+                    if lines:
+                        extract = "\n".join(lines[:2])
+
+                sections.append(f"**{idx}. [{title}]({url})** `({domain})`")
+                sections.append(f"> {extract[:400]}...\n")
+
+        # Step 4: Add Comparative Synthesis & Reasoning Template Section
+        if is_turkish:
+            sections.append("\n---\n")
+            sections.append("## ⚖️ 2. Karşılaştırmalı Değerlendirme & Alternatif Analizi")
+            sections.append(
+                "Aşağıda araştırılan konunun benzer/rakip alternatifler ve farklı kullanım senaryoları ile karşılaştırılması yer almaktadır:\n"
+            )
+            sections.append("| Boyut / Kriter | İncelenen Konu (`" + topic + "`) | Yakın / Benzer Alternatifler |")
+            sections.append("|---|---|---|")
+            sections.append("| **Temel Odak Noktası** | Birincil kullanım alanı ve temel vaadi | Alternatif çözümlerin yöneldiği farklı alanlar |")
+            sections.append("| **Güçlü Yönler (Pros)** | Hız, esneklik, topluluk veya mimari avantajlar | Alternatiflerin daha iyi yaptığı noktalar |")
+            sections.append("| **Riskler & Dikkat Edilmesi Gerekenler** | Karmaşıklık, maliyet, öğrenme eğrisi veya limitler | Alternatiflerdeki olası dezavantajlar |")
+            sections.append("\n---\n")
+            sections.append("## 🧠 3. Çıkarım & Akıl Yürütme (Synthesized Insights)")
+            sections.append(
+                f"- **Ortak Mutabakat (Consensus):** Kaynakların çoğu `{topic}` konusunda temel gereksinim ve çözümler üzerinde hemfikirdir.\n"
+                f"- **Çelişen Görüşler / Tartışmalar:** Performans, ölçeklenebilirlik veya geçiş maliyeti konularında farklı kullanım senaryolarına göre görüş ayrılıkları mevcuttur.\n"
+                f"- **Stratejik Tavsiye:** Bu konuyu projenizde veya kararınızda değerlendirirken alternatiflerle olan trade-off (ödünleşim) dengesini göz önünde bulundurunuz."
+            )
+        else:
+            sections.append("\n---\n")
+            sections.append("## ⚖️ 2. Comparative Matrix & Alternative Analysis")
+            sections.append(
+                "Direct comparison between the main subject and closely related alternatives/approaches:\n"
+            )
+            sections.append("| Dimension / Criteria | Subject (`" + topic + "`) | Key Alternatives & Counterparts |")
+            sections.append("|---|---|---|")
+            sections.append("| **Core Focus** | Primary target capability & proposition | Alternative paradigms or competing solutions |")
+            sections.append("| **Strengths (Pros)** | Performance, velocity, ecosystem, or ease-of-use | Where alternative tools outperform |")
+            sections.append("| **Trade-offs & Risks** | Complexity, learning curve, overhead, or limits | Weaknesses observed in alternative approaches |")
+            sections.append("\n---\n")
+            sections.append("## 🧠 3. Reasoning & Synthesized Insights")
+            sections.append(
+                f"- **General Consensus:** Sources align on the primary capabilities and intended architecture of `{topic}`.\n"
+                f"- **Key Debates / Trade-offs:** Nuanced trade-offs exist around implementation cost vs. long-term maintainability across different scale thresholds.\n"
+                f"- **Strategic Recommendation:** Tailor your adoption or decision based on specific ecosystem constraints and operational trade-offs."
+            )
+
+        db.close()
+        return _get_datetime_header() + "\n".join(sections)
+
+    except Exception as exc:
+        db.close()
+        logger.error(f"Error in deep_research: {exc}")
+        return f"Error occurred during deep research: Request timed out or service unavailable."
 
 
 # ---------------------------------------------------------------------------

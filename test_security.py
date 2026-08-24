@@ -161,10 +161,76 @@ check("Contains UTC timestamp", "UTC:" in header)
 
 print()
 print("=" * 55)
+print("8. ResearchSessionDB & Deep Research Helper Tests")
+print("=" * 55)
+
+ResearchSessionDB = ns["ResearchSessionDB"]
+_generate_research_angles = ns["_generate_research_angles"]
+_extract_domain = ns["_extract_domain"]
+deep_research = ns["deep_research"]
+
+# Test angle generation
+tr_angles = _generate_research_angles("Rust vs Go", is_turkish=True, depth="standard")
+check("Generates Turkish angles for standard depth", len(tr_angles) == 4)
+check("Turkish angles contain Alternatifler & Karşılaştırma", any("Alternatifler" in a["angle"] for a in tr_angles))
+
+deep_angles = _generate_research_angles("Quantum Computing", is_turkish=False, depth="deep")
+check("Generates English angles for deep depth", len(deep_angles) == 5)
+check("Deep angles include Future Outlook", any("Future Outlook" in a["angle"] for a in deep_angles))
+
+# Test domain extractor
+check("Extracts domain without www", _extract_domain("https://www.nature.com/articles/123") == "nature.com")
+check("Extracts clean domain from query URL", _extract_domain("http://techcrunch.com/post?id=1") == "techcrunch.com")
+
+# Test SQLite ResearchSessionDB
+db = ResearchSessionDB()
+src1_id = db.add_source(
+    url="https://example.com/rust",
+    title="Rust Performance Analysis",
+    domain="example.com",
+    angle="Avantajlar & Güçlü Yönler",
+    snippet="Rust provides memory safety without garbage collection.",
+    content="Rust provides memory safety without garbage collection and near C++ speed."
+)
+check("Inserts source into SQLite DB and returns ID", src1_id is not None and src1_id > 0)
+
+# Test duplicate URL handling
+src1_dup_id = db.add_source(
+    url="https://example.com/rust",
+    title="Rust Performance Analysis",
+    domain="example.com",
+    angle="Genel Bakış",
+    snippet="Duplicate entry test",
+    content="Duplicate entry test"
+)
+check("Handles duplicate source URL gracefully in SQLite", src1_dup_id == src1_id)
+
+db.add_finding(
+    source_id=src1_id,
+    angle="Avantajlar & Güçlü Yönler",
+    key_point="Memory Safety",
+    detail="No garbage collector overhead"
+)
+
+summary = db.get_summary_by_angle()
+check("Retrieves grouped summaries by angle from SQLite", "Avantajlar & Güçlü Yönler" in summary)
+check("Summary item contains correct title", summary["Avantajlar & Güçlü Yönler"][0]["title"] == "Rust Performance Analysis")
+
+stats = db.get_stats()
+check("Reports correct SQLite DB stats", stats["sources_count"] == 1 and stats["unique_domains"] == 1)
+db.close()
+
+# Test deep_research empty input validation
+check("Validates empty topic input for deep_research", "Please provide a valid topic" in deep_research(""))
+
+
+print()
+print("=" * 55)
 total = passed + failed
 print(f"Results: {passed}/{total} tests passed" + (" — ALL OK" if failed == 0 else f" — {failed} FAILED"))
 print("=" * 55)
 
 sys.exit(0 if failed == 0 else 1)
+
 
 
