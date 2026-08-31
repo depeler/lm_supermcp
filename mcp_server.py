@@ -1384,30 +1384,34 @@ def _get_desktop_path() -> Path:
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def render_html_preview(
-    html_code: str,
+    html_code: str = "",
     title: str = "Live Web App / Preview",
     open_in_browser: bool = False,
+    session_id: str = "",
 ) -> str:
     """
     Render and display an interactive HTML, CSS, and JavaScript web application.
     Whenever asked to write, create, design, or run HTML/JS web applications, dashboards, tools, games, or UI components,
     you must call this tool to embed a live interactive sandbox widget in LM Studio and launch it for the user.
+    If html_code is omitted or empty, the latest code stored in memory for session_id will be automatically loaded and rendered!
 
     Args:
-        html_code: Complete HTML code (can include inline <style> and <script> tags).
+        html_code: Complete HTML code (optional if already submitted to memory or session).
         title: Title of the application/component.
         open_in_browser: If True, opens the rendered app immediately in the default web browser.
+        session_id: Optional session identifier to load code from memory.
     """
+    effective_code = _code_iteration_mgr.resolve_code(html_code, session_id)
+    if not effective_code:
+        return "Error: No HTML code provided and no existing session code found in memory. Please provide html_code or run iterate_code_session first."
+
     logger.info(f"Rendering HTML preview: '{title}' (open_in_browser={open_in_browser})")
 
-    if not isinstance(html_code, str) or not html_code.strip():
-        return "Error: HTML code must be a non-empty string."
-
-    if len(html_code) > 500000:
+    if len(effective_code) > 500000:
         return "Error: HTML content too large (max 500 KB)."
 
     # Complete HTML document structure if missing
-    clean_code = html_code.strip()
+    clean_code = effective_code.strip()
     if not ("<html" in clean_code.lower() or "<!doctype html>" in clean_code.lower()):
         full_html = (
             "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
@@ -1468,22 +1472,26 @@ def render_html_preview(
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def save_code_to_desktop(
-    code: str,
+    code: str = "",
     filename: str = "index.html",
     overwrite: bool = True,
+    session_id: str = "",
 ) -> str:
     """
     Save written HTML, JavaScript, CSS, or any code file directly to the user's Desktop.
+    If code is omitted, the latest code stored in memory for session_id will be saved!
 
     Args:
-        code: Content of the file to save.
+        code: Content of the file to save (optional if already stored in memory).
         filename: Desired file name (e.g. 'index.html', 'app.js', 'dashboard.html', 'calculator.html').
         overwrite: Whether to overwrite if the file already exists (default: True).
+        session_id: Optional session identifier to load code from memory.
     """
-    logger.info(f"Saving file to Desktop: '{filename}'")
+    effective_code = _code_iteration_mgr.resolve_code(code, session_id)
+    if not effective_code:
+        return "Error: No code provided and no existing session code found in memory. Please provide code or run iterate_code_session first."
 
-    if not isinstance(code, str) or not code.strip():
-        return "Error: Code content must be a non-empty string."
+    logger.info(f"Saving file to Desktop: '{filename}'")
 
     if not isinstance(filename, str) or not filename.strip():
         filename = "index.html"
@@ -1636,20 +1644,23 @@ def run_html_sandbox(html_code: str, script: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Code Iteration & Version Session Manager
+# Code Iteration & Version Session Manager (Code Memory & Patching)
 # ---------------------------------------------------------------------------
 class CodeIterationManager:
-    """Thread-safe manager for multi-step LLM code evolution and self-refinement."""
+    """Thread-safe manager for LLM code memory, versioning, and surgical patch refinement."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, list[dict[str, Any]]] = {}
+        self._last_active_session: str = "default_app"
         self._lock = threading.Lock()
 
     def update_version(self, session_id: str, code: str, note: str = "", test_summary: str = "") -> dict[str, Any]:
         with self._lock:
-            if session_id not in self._sessions:
-                self._sessions[session_id] = []
-            ver_num = len(self._sessions[session_id]) + 1
+            sid = (session_id or "default_app").strip()
+            self._last_active_session = sid
+            if sid not in self._sessions:
+                self._sessions[sid] = []
+            ver_num = len(self._sessions[sid]) + 1
             record = {
                 "version": ver_num,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1658,21 +1669,53 @@ class CodeIterationManager:
                 "test_summary": test_summary,
                 "length": len(code),
             }
-            self._sessions[session_id].append(record)
+            self._sessions[sid].append(record)
             return record
 
-    def get_latest(self, session_id: str) -> dict[str, Any] | None:
+    def patch_version(self, session_id: str, search: str, replace: str, note: str = "") -> dict[str, Any] | None:
+        """Apply targeted search-and-replace modification to the latest code in memory without rewriting."""
         with self._lock:
-            history = self._sessions.get(session_id, [])
+            sid = (session_id or self._last_active_session or "default_app").strip()
+            history = self._sessions.get(sid, [])
+            if not history:
+                return None
+            current_code = history[-1]["code"]
+            if search not in current_code:
+                return None  # Search string not matched
+            
+            new_code = current_code.replace(search, replace, 1)
+            ver_num = len(history) + 1
+            record = {
+                "version": ver_num,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "code": new_code,
+                "note": note or f"Patched: {search[:30]} -> {replace[:30]}",
+                "test_summary": "Pending re-test",
+                "length": len(new_code),
+            }
+            history.append(record)
+            self._last_active_session = sid
+            return record
+
+    def get_latest(self, session_id: str | None = None) -> dict[str, Any] | None:
+        with self._lock:
+            sid = (session_id or self._last_active_session or "default_app").strip()
+            history = self._sessions.get(sid, [])
+            if not history and session_id is None and self._sessions:
+                # Pick any latest active session
+                first_key = next(iter(self._sessions))
+                history = self._sessions[first_key]
             return history[-1] if history else None
 
-    def get_history(self, session_id: str) -> list[dict[str, Any]]:
+    def get_history(self, session_id: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
-            return list(self._sessions.get(session_id, []))
+            sid = (session_id or self._last_active_session or "default_app").strip()
+            return list(self._sessions.get(sid, []))
 
-    def rollback(self, session_id: str, version: int | None = None) -> dict[str, Any] | None:
+    def rollback(self, session_id: str | None = None, version: int | None = None) -> dict[str, Any] | None:
         with self._lock:
-            history = self._sessions.get(session_id, [])
+            sid = (session_id or self._last_active_session or "default_app").strip()
+            history = self._sessions.get(sid, [])
             if not history:
                 return None
             if version is None:
@@ -1685,6 +1728,20 @@ class CodeIterationManager:
                 if item["version"] == version:
                     return item
             return history[-1]
+
+    def resolve_code(self, code: str, session_id: str = "") -> str:
+        """Resolve code: if code is provided use it; otherwise load from memory/session."""
+        if isinstance(code, str) and code.strip():
+            # If valid code passed, remember it in session
+            sid = (session_id or self._last_active_session or "default_app").strip()
+            self._last_active_session = sid
+            return code.strip()
+        
+        # Otherwise fetch from memory
+        latest = self.get_latest(session_id)
+        if latest and latest.get("code"):
+            return latest["code"]
+        return ""
 
 
 _code_iteration_mgr = CodeIterationManager()
@@ -2053,26 +2110,30 @@ _MOCK_BROWSER_SHIM = """
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def test_and_evaluate_code(
-    html_code: str,
+    html_code: str = "",
     test_script: str = "",
     expected_elements: list[str] | None = None,
+    session_id: str = "",
 ) -> str:
     """
     Execute, inspect, and unit-test HTML and JavaScript code in an isolated sandbox before finalizing.
     Whenever generating JavaScript or web applications, you should first test your code with this tool to verify syntax, DOM selectors, and logic assertions, inspecting any diagnostics to fix errors before final presentation.
+    If html_code is omitted, the latest code stored in memory for session_id will be automatically evaluated!
 
     Args:
-        html_code: Complete HTML/CSS/JS code to test.
+        html_code: Complete HTML/CSS/JS code to test (optional if already stored in memory).
         test_script: Optional unit test assertions in JavaScript using assert(cond, msg) or expect(val).toBe(expected).
         expected_elements: Optional list of CSS selectors (e.g. ['#calc-display', 'button.op-add', 'input[type=number]']) to verify.
+        session_id: Optional session identifier to load code from memory.
     """
+    effective_code = _code_iteration_mgr.resolve_code(html_code, session_id)
+    if not effective_code:
+        return "Error: No code provided and no existing session code found in memory. Please provide html_code or run iterate_code_session first."
+
     logger.info("Executing self-test and evaluation on code")
 
-    if not isinstance(html_code, str) or not html_code.strip():
-        return "Error: html_code must be a non-empty string."
-
     try:
-        soup = BeautifulSoup(html_code, "lxml")
+        soup = BeautifulSoup(effective_code, "lxml")
         title = soup.title.string if soup.title else "Untitled"
 
         # 1. Inspect DOM Elements and Selectors
@@ -2247,38 +2308,43 @@ def test_and_evaluate_code(
 # ---------------------------------------------------------------------------
 @mcp.tool()
 def iterate_code_session(
-    session_id: str,
+    session_id: str = "",
     action: str = "update",
     code: str = "",
     test_script: str = "",
     note: str = "",
     expected_elements: list[str] | None = None,
+    patch_search: str = "",
+    patch_replace: str = "",
 ) -> str:
     """
     Manage a multi-step iterative coding session to develop, test, refine, and evolve code until perfection.
-    Use this tool when creating or refactoring complex applications step-by-step, committing versions (action='update'),
-    evaluating test outputs, fixing bugs in subsequent iterations, and rolling back if a regression occurs.
+    Code is stored in memory per session_id — once submitted, you do NOT need to repeat the full code again.
+    Use action='patch' to surgically update only the changed part; use action='update' for full code replacement.
+    Always use the same session_id for the entire lifecycle of an application.
 
     Actions:
-        - 'update': Commit a new code version and immediately run automated sandbox tests.
-        - 'get_latest': Retrieve the most recent code version and its test status.
-        - 'history': List all versions, changelog notes, and timestamps.
-        - 'rollback': Revert to previous working version.
+        - 'update': Submit or replace full code. Auto-tests and stores in memory.
+        - 'patch': Surgically patch the code in memory (search → replace). No need to rewrite the whole code.
+        - 'get_latest': Retrieve the latest code version from memory.
+        - 'history': List all versions, timestamps, and test statuses.
+        - 'rollback': Revert to the previous working version.
+        - 'preview': Render the current code from memory directly in LM Studio (no need to pass html_code again).
+        - 'save': Save the current code from memory directly to Desktop.
 
     Args:
-        session_id: Unique identifier for the project/app (e.g. 'calculator_app', 'crypto_dashboard').
-        action: One of 'update', 'get_latest', 'history', 'rollback'.
-        code: The new or updated HTML/JS code (required for action='update').
-        test_script: Optional unit test assertions to run against the new code.
-        note: Short note on what was improved or fixed in this iteration.
-        expected_elements: Optional list of CSS selectors to verify.
+        session_id: Unique identifier for this app/project (e.g. 'calculator_app', 'todo_dashboard').
+        action: One of 'update', 'patch', 'get_latest', 'history', 'rollback', 'preview', 'save'.
+        code: Full HTML/JS code — only for action='update'.
+        test_script: Optional JS unit test assertions to run on submission.
+        note: Short changelog note for this version.
+        expected_elements: CSS selectors to verify in DOM.
+        patch_search: Exact code fragment to find (for action='patch').
+        patch_replace: Replacement code fragment (for action='patch').
     """
-    session_id = (session_id or "").strip()
-    if not session_id:
-        return "Error: session_id must be provided."
-
+    sid = (session_id or "").strip()
     action = action.lower().strip()
-    logger.info(f"Code iteration session '{session_id}' - action '{action}'")
+    logger.info(f"Code iteration session '{sid or 'default'}' - action '{action}'")
 
     if action == "update":
         if not code or not code.strip():
@@ -2295,7 +2361,7 @@ def iterate_code_session(
 
         # 2. Record version
         ver_record = _code_iteration_mgr.update_version(
-            session_id=session_id,
+            session_id=sid or "default_app",
             code=code,
             note=note or ("Auto-tested code update" + (" (Passed)" if not has_failures else " (Needs Fix)")),
             test_summary="Passed" if not has_failures else "Failed checks",
@@ -2304,35 +2370,70 @@ def iterate_code_session(
         status_text = "🟢 **Version Successfully Recorded & Tested!**" if not has_failures else "🟡 **Version Recorded with Pending Diagnostics to Fix!**"
 
         out = [
-            f"## 🚀 Iterative Code Session: `{session_id}` (v{ver_record['version']})",
+            f"## 🚀 Iterative Code Session: `{sid or 'default_app'}` (v{ver_record['version']})",
             status_text,
             f"- **Timestamp:** `{ver_record['timestamp']}` | **Note:** {ver_record['note']}\n",
             test_feedback,
-            "\n*(Tip: If errors exist, update the code in the next step via `iterate_code_session(action='update')`; once perfected, call `save_code_to_desktop` or `render_html_preview`.)*"
+            "\n*(Tip: Use action='patch' to update only a specific section; action='preview' to render; action='save' to save to Desktop.)*"
+        ]
+        return _get_datetime_header() + "\n".join(out)
+
+    elif action == "patch":
+        if not patch_search:
+            return "Error: patch_search must be provided when action is 'patch'. Specify the exact code fragment to replace."
+
+        patched = _code_iteration_mgr.patch_version(
+            session_id=sid or "default_app",
+            search=patch_search,
+            replace=patch_replace,
+            note=note or f"Patched: '{patch_search[:40].strip()}...'",
+        )
+        if patched is None:
+            latest = _code_iteration_mgr.get_latest(sid)
+            if not latest:
+                return f"Error: No code found in memory for session '{sid}'. Use action='update' first."
+            return f"Error: The patch_search string was not found in the current code (v{latest['version']}). Check the exact string and retry."
+
+        # Re-test the patched code
+        test_feedback = test_and_evaluate_code(
+            html_code=patched["code"],
+            test_script=test_script,
+            expected_elements=expected_elements,
+        )
+        has_failures = "ISSUES/ERRORS DETECTED" in test_feedback or "Runtime Error" in test_feedback
+        _code_iteration_mgr._sessions[sid or "default_app"][-1]["test_summary"] = "Passed" if not has_failures else "Failed checks"
+
+        status_text = "🟢 **Patch Applied & Tested!**" if not has_failures else "🟡 **Patch Applied — Fix Remaining Issues!**"
+        out = [
+            f"## 🩹 Code Patch: `{sid or 'default_app'}` (v{patched['version']})",
+            status_text,
+            f"- **Timestamp:** `{patched['timestamp']}` | **Note:** {patched['note']}\n",
+            test_feedback,
+            "\n*(Tip: You can keep patching iteratively or call action='preview' / action='save' when ready.)*"
         ]
         return _get_datetime_header() + "\n".join(out)
 
     elif action == "get_latest":
-        latest = _code_iteration_mgr.get_latest(session_id)
+        latest = _code_iteration_mgr.get_latest(sid or None)
         if not latest:
-            return f"Session `{session_id}` not found or no code submitted yet."
+            return f"Session `{sid}` not found or no code submitted yet."
         return (
             _get_datetime_header()
-            + f"### 📦 Latest Version: `{session_id}` (v{latest['version']})\n"
+            + f"### 📦 Latest Version: `{sid}` (v{latest['version']})\n"
             f"- **Timestamp:** `{latest['timestamp']}` | **Note:** {latest['note']}\n\n"
             f"```html\n{latest['code']}\n```"
         )
 
     elif action == "history":
-        history = _code_iteration_mgr.get_history(session_id)
+        history = _code_iteration_mgr.get_history(sid or None)
         if not history:
-            return f"No history found for session `{session_id}`."
+            return f"No history found for session `{sid}`."
         rows = [
             f"| v{h['version']} | {h['timestamp']} | {h['length']} B | {h['test_summary']} | {h['note']} |"
             for h in history
         ]
         out = [
-            f"### 📜 Version History: `{session_id}`",
+            f"### 📜 Version History: `{sid}`",
             "| Version | Timestamp | Size | Test Status | Changelog Note |",
             "|---------|-----------|------|-------------|----------------|",
             *rows,
@@ -2340,16 +2441,29 @@ def iterate_code_session(
         return _get_datetime_header() + "\n".join(out)
 
     elif action == "rollback":
-        reverted = _code_iteration_mgr.rollback(session_id)
+        reverted = _code_iteration_mgr.rollback(sid or None)
         if not reverted:
-            return f"No prior version available to roll back for session `{session_id}`."
+            return f"No prior version available to roll back for session `{sid}`."
         return (
             _get_datetime_header()
-            + f"⏪ **Rolled Back:** `{session_id}` is now at **v{reverted['version']}** ({reverted['note']})."
+            + f"⏪ **Rolled Back:** `{sid}` is now at **v{reverted['version']}** ({reverted['note']})."
         )
 
+    elif action == "preview":
+        latest = _code_iteration_mgr.get_latest(sid or None)
+        if not latest:
+            return f"Error: No code found in memory for session `{sid}`. Use action='update' first."
+        return render_html_preview(html_code=latest["code"], session_id=sid)
+
+    elif action == "save":
+        latest = _code_iteration_mgr.get_latest(sid or None)
+        if not latest:
+            return f"Error: No code found in memory for session `{sid}`. Use action='update' first."
+        fname = f"{sid.replace(' ', '_') if sid else 'app'}.html"
+        return save_code_to_desktop(code=latest["code"], filename=fname, session_id=sid)
+
     else:
-        return f"Unknown action '{action}'. Supported actions: 'update', 'get_latest', 'history', 'rollback'."
+        return f"Unknown action '{action}'. Supported actions: 'update', 'patch', 'get_latest', 'history', 'rollback', 'preview', 'save'."
 
 
 # ---------------------------------------------------------------------------

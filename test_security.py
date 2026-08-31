@@ -236,8 +236,8 @@ save_code_to_desktop = ns["save_code_to_desktop"]
 run_html_sandbox = ns["run_html_sandbox"]
 _get_desktop_path = ns["_get_desktop_path"]
 
-# Test render_html_preview validation
-check("render_html_preview handles empty input", "Error: HTML code must be a non-empty string." in render_html_preview(""))
+# Test render_html_preview validation (memory-first: empty html_code falls through to memory lookup)
+check("render_html_preview handles empty input", "Error" in render_html_preview(""))
 preview_res = render_html_preview("<h1>Hello LM Studio</h1>", title="Test App")
 check("render_html_preview generates iframe and data-uri", "<iframe" in preview_res and "data:text/html;base64," in preview_res)
 check("render_html_preview provides sandbox link", "127.0.0.1:8765" in preview_res)
@@ -346,6 +346,34 @@ check("iterate_code_session retrieves latest version code", "var x = 20" in late
 
 rollback_res = iterate_code_session(session_id=session_id, action="rollback")
 check("iterate_code_session rolls back version", "Rolled Back" in rollback_res and "v1" in rollback_res)
+
+# Test patch action (surgical code edit without rewriting)
+patch_session = "test_patch_session"
+iterate_code_session(
+    session_id=patch_session,
+    action="update",
+    code="<html><script>var color = 'red';</script></html>",
+    note="Initial color"
+)
+patch_res = iterate_code_session(
+    session_id=patch_session,
+    action="patch",
+    patch_search="var color = 'red';",
+    patch_replace="var color = 'blue';",
+    note="Changed color to blue"
+)
+check("iterate_code_session patch action creates new version", "v2" in patch_res and "Patch" in patch_res)
+
+latest_patch = iterate_code_session(session_id=patch_session, action="get_latest")
+check("patch action updates code in memory without full rewrite", "var color = 'blue'" in latest_patch)
+
+# Test memory resolution: render from memory without passing code again
+preview_mem = render_html_preview(session_id=patch_session)
+check("render_html_preview uses code from memory when html_code is omitted", "<iframe" in preview_mem and "data:text/html;base64," in preview_mem)
+
+# Test test_and_evaluate_code from memory
+eval_mem = test_and_evaluate_code(session_id=patch_session)
+check("test_and_evaluate_code evaluates code from memory when html_code omitted", "Evaluation" in eval_mem or "TESTS PASSED" in eval_mem or "ISSUES" in eval_mem)
 
 # =======================================================
 # 11. Full Simulated DOM Operations Tests
