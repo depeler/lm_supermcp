@@ -347,6 +347,68 @@ check("iterate_code_session retrieves latest version code", "var x = 20" in late
 rollback_res = iterate_code_session(session_id=session_id, action="rollback")
 check("iterate_code_session rolls back version", "Rolled Back" in rollback_res and "v1" in rollback_res)
 
+# =======================================================
+# 11. Full Simulated DOM Operations Tests
+# =======================================================
+print()
+print("=" * 55)
+print("11. Full Simulated DOM Operations Tests")
+print("=" * 55)
+
+dom_test_html = """
+<!DOCTYPE html>
+<html>
+<head><title>DOM Sandbox Test</title></head>
+<body>
+  <div id="container" class="main-box">
+    <span class="info-text">Initial Text</span>
+  </div>
+</body>
+</html>
+"""
+
+dom_test_script = """
+// 1. createElement & appendChild
+var btn = document.createElement('button');
+btn.id = 'submit-btn';
+btn.className = 'btn primary';
+btn.textContent = 'Submit';
+btn.style.color = 'red';
+document.body.appendChild(btn);
+
+assert(document.getElementById('submit-btn') !== null, 'document.getElementById finds created button');
+assert(btn.style.color === 'red', 'style property works');
+
+// 2. classList API
+btn.classList.add('active');
+assert(btn.classList.contains('active'), 'classList.add and contains work');
+btn.classList.remove('primary');
+assert(!btn.classList.contains('primary'), 'classList.remove works');
+
+// 3. Event listener & dispatchEvent / click
+var clicked = false;
+btn.addEventListener('click', function(e) {
+    clicked = true;
+    btn.textContent = 'Clicked!';
+});
+btn.click();
+assert(clicked === true, 'addEventListener and click() work');
+assert(btn.textContent === 'Clicked!', 'textContent update on click works');
+
+// 4. querySelector & querySelectorAll
+var foundSpan = document.querySelector('.info-text');
+assert(foundSpan !== null, 'querySelector with class finds element');
+var allButtons = document.querySelectorAll('button');
+assert(allButtons.length === 1, 'querySelectorAll finds all button elements');
+
+// 5. attributes API
+btn.setAttribute('data-id', '12345');
+assert(btn.getAttribute('data-id') === '12345', 'setAttribute and getAttribute work');
+"""
+
+dom_eval = test_and_evaluate_code(html_code=dom_test_html, test_script=dom_test_script)
+check("Full DOM operations pass in sandbox", "TESTS PASSED" in dom_eval and "[FAIL]" not in dom_eval)
+
 
 print()
 print("=" * 55)

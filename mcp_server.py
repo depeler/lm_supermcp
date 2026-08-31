@@ -79,9 +79,11 @@ _DANGEROUS_URL_PATTERNS = [
     r"<script",
 ]
 
-# Dangerous JavaScript patterns to block
+# Dangerous JavaScript patterns to block (process escape, file access, network exploitation, cookie access)
 _DANGEROUS_JS_PATTERNS = [
-    r"document\.(cookie|write|location)",
+    r"document\.cookie",
+    r"document\.location\s*=",
+    r"window\.location\s*=",
     r"fetch\s*\(",
     r"eval\s*\(",
     r"navigator\.(geolocation|userAgent)",
@@ -1554,22 +1556,39 @@ def run_html_sandbox(html_code: str, script: str = "") -> str:
         js_results = []
         if scripts:
             ctx = _get_js_engine()
-            # Mini sandbox logger shim
-            shim = """
-            var console = {
-                logs: [],
-                log: function() {
-                    var args = Array.prototype.slice.call(arguments);
-                    this.logs.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
-                },
-                error: function() { this.log.apply(this, arguments); },
-                warn: function() { this.log.apply(this, arguments); }
-            };
-            """
             try:
-                ctx.eval(shim)
-            except Exception:
-                pass
+                ctx.eval(_MOCK_BROWSER_SHIM)
+            except Exception as e:
+                logger.warning(f"Failed to load mock browser shim: {e}")
+
+            # Hydrate DOM from HTML structure
+            def _build_dom_js(tag, parent_var="document.body") -> str:
+                lines = []
+                for child in getattr(tag, "children", []):
+                    if not hasattr(child, "name") or child.name is None:
+                        txt = str(child).strip()
+                        if txt:
+                            lines.append(f"{parent_var}.appendChild(document.createTextNode({json.dumps(txt)}));")
+                        continue
+                    var_name = f"el_{abs(hash(str(child))) % 10000000}"
+                    lines.append(f"var {var_name} = document.createElement({json.dumps(child.name)});")
+                    for attr_k, attr_v in child.attrs.items():
+                        if isinstance(attr_v, list):
+                            attr_v = " ".join(attr_v)
+                        lines.append(f"{var_name}.setAttribute({json.dumps(attr_k)}, {json.dumps(str(attr_v))});")
+                    child_lines = _build_dom_js(child, var_name)
+                    if child_lines:
+                        lines.append(child_lines)
+                    lines.append(f"{parent_var}.appendChild({var_name});")
+                return "\n".join(lines)
+
+            try:
+                body_tag = soup.body if soup.body else soup
+                dom_init_script = _build_dom_js(body_tag, "document.body")
+                if dom_init_script:
+                    ctx.eval(dom_init_script)
+            except Exception as dhe:
+                logger.warning(f"Failed to hydrate DOM in run_html_sandbox: {dhe}")
 
             for idx, sc in enumerate(scripts, 1):
                 # Filter dangerous patterns
@@ -1672,75 +1691,360 @@ _code_iteration_mgr = CodeIterationManager()
 
 
 # ---------------------------------------------------------------------------
-# Helper: Rich Mock Browser & DOM Environment Shim for Self-Testing
+# Helper: Rich Mock Browser & Full DOM Environment Shim for Sandbox Execution
 # ---------------------------------------------------------------------------
 _MOCK_BROWSER_SHIM = """
-var console = {
-    logs: [],
-    errors: [],
-    warns: [],
-    log: function() {
-        var args = Array.prototype.slice.call(arguments);
-        this.logs.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
-    },
-    error: function() {
-        var args = Array.prototype.slice.call(arguments);
-        this.errors.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
-    },
-    warn: function() {
-        var args = Array.prototype.slice.call(arguments);
-        this.warns.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
-    }
-};
-
-var __test_results = { passed: [], failed: [] };
-
-function assert(condition, message) {
-    if (condition) {
-        __test_results.passed.push(message || 'Assertion passed');
-    } else {
-        __test_results.failed.push(message || 'Assertion failed');
-    }
-}
-
-function expect(actual) {
-    return {
-        toBe: function(expected, msg) {
-            assert(actual === expected, (msg ? msg + ': ' : '') + 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+(function() {
+    var console = {
+        logs: [],
+        errors: [],
+        warns: [],
+        log: function() {
+            var args = Array.prototype.slice.call(arguments);
+            this.logs.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
         },
-        toEqual: function(expected, msg) {
-            assert(JSON.stringify(actual) === JSON.stringify(expected), (msg ? msg + ': ' : '') + 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+        error: function() {
+            var args = Array.prototype.slice.call(arguments);
+            this.errors.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
         },
-        toBeTruthy: function(msg) {
-            assert(Boolean(actual), (msg ? msg + ': ' : '') + 'Expected truthy but got ' + JSON.stringify(actual));
-        },
-        toBeFalsy: function(msg) {
-            assert(!Boolean(actual), (msg ? msg + ': ' : '') + 'Expected falsy but got ' + JSON.stringify(actual));
-        },
-        toBeGreaterThan: function(expected, msg) {
-            assert(actual > expected, (msg ? msg + ': ' : '') + 'Expected > ' + expected + ' but got ' + actual);
-        },
-        toContain: function(item, msg) {
-            var found = (typeof actual === 'string' || Array.isArray(actual)) ? actual.indexOf(item) !== -1 : false;
-            assert(found, (msg ? msg + ': ' : '') + 'Expected collection to contain ' + JSON.stringify(item));
+        warn: function() {
+            var args = Array.prototype.slice.call(arguments);
+            this.warns.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
         }
     };
-}
 
-var localStorage = {
-    _data: {},
-    getItem: function(k) { return this._data.hasOwnProperty(k) ? this._data[k] : null; },
-    setItem: function(k, v) { this._data[k] = String(v); },
-    removeItem: function(k) { delete this._data[k]; },
-    clear: function() { this._data = {}; }
-};
+    var __test_results = { passed: [], failed: [] };
 
-var window = {
-    localStorage: localStorage,
-    console: console,
-    setTimeout: function(fn) { try { fn(); } catch(e){} return 1; },
-    clearTimeout: function() {}
-};
+    function assert(condition, message) {
+        if (condition) {
+            __test_results.passed.push(message || 'Assertion passed');
+        } else {
+            __test_results.failed.push(message || 'Assertion failed');
+        }
+    }
+
+    function expect(actual) {
+        return {
+            toBe: function(expected, msg) {
+                assert(actual === expected, (msg ? msg + ': ' : '') + 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+            },
+            toEqual: function(expected, msg) {
+                assert(JSON.stringify(actual) === JSON.stringify(expected), (msg ? msg + ': ' : '') + 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+            },
+            toBeTruthy: function(msg) {
+                assert(Boolean(actual), (msg ? msg + ': ' : '') + 'Expected truthy but got ' + JSON.stringify(actual));
+            },
+            toBeFalsy: function(msg) {
+                assert(!Boolean(actual), (msg ? msg + ': ' : '') + 'Expected falsy but got ' + JSON.stringify(actual));
+            },
+            toBeGreaterThan: function(expected, msg) {
+                assert(actual > expected, (msg ? msg + ': ' : '') + 'Expected > ' + expected + ' but got ' + actual);
+            },
+            toContain: function(item, msg) {
+                var found = (typeof actual === 'string' || Array.isArray(actual)) ? actual.indexOf(item) !== -1 : false;
+                assert(found, (msg ? msg + ': ' : '') + 'Expected collection to contain ' + JSON.stringify(item));
+            }
+        };
+    }
+
+    // --- Full Lightweight DOM Simulator ---
+    function DOMClassList(el) {
+        this._el = el;
+    }
+    DOMClassList.prototype = {
+        _getClasses: function() {
+            return (this._el.className || '').trim().split(/\\s+/).filter(Boolean);
+        },
+        add: function() {
+            var current = this._getClasses();
+            for (var i = 0; i < arguments.length; i++) {
+                if (current.indexOf(arguments[i]) === -1) current.push(arguments[i]);
+            }
+            this._el.className = current.join(' ');
+        },
+        remove: function() {
+            var removeList = Array.prototype.slice.call(arguments);
+            var current = this._getClasses().filter(function(c) { return removeList.indexOf(c) === -1; });
+            this._el.className = current.join(' ');
+        },
+        toggle: function(cls, force) {
+            var current = this._getClasses();
+            var exists = current.indexOf(cls) !== -1;
+            if (force === true || (!exists && force !== false)) {
+                this.add(cls);
+                return true;
+            } else {
+                this.remove(cls);
+                return false;
+            }
+        },
+        contains: function(cls) {
+            return this._getClasses().indexOf(cls) !== -1;
+        }
+    };
+
+    function DOMElement(tagName, id, className) {
+        this.tagName = (tagName || 'DIV').toUpperCase();
+        this.nodeName = this.tagName;
+        this.nodeType = 1;
+        this.id = id || '';
+        this.className = className || '';
+        this.children = [];
+        this.childNodes = this.children;
+        this.parentNode = null;
+        this.parentElement = null;
+        this.attributes = {};
+        this.style = {};
+        this._listeners = {};
+        this.value = '';
+        this._innerHTML = '';
+        this._textContent = '';
+        this.classList = new DOMClassList(this);
+    }
+
+    Object.defineProperty(DOMElement.prototype, 'innerHTML', {
+        get: function() { return this._innerHTML || this._textContent || ''; },
+        set: function(val) {
+            this._innerHTML = String(val);
+            this._textContent = String(val).replace(/<[^>]*>?/gm, '');
+        }
+    });
+
+    Object.defineProperty(DOMElement.prototype, 'textContent', {
+        get: function() { return this._textContent || this._innerHTML.replace(/<[^>]*>?/gm, ''); },
+        set: function(val) {
+            this._textContent = String(val);
+            this._innerHTML = String(val);
+        }
+    });
+
+    DOMElement.prototype.getAttribute = function(name) {
+        if (name === 'id') return this.id;
+        if (name === 'class') return this.className;
+        return this.attributes[name] !== undefined ? this.attributes[name] : null;
+    };
+
+    DOMElement.prototype.setAttribute = function(name, val) {
+        if (name === 'id') this.id = String(val);
+        else if (name === 'class') this.className = String(val);
+        this.attributes[name] = String(val);
+    };
+
+    DOMElement.prototype.removeAttribute = function(name) {
+        if (name === 'id') this.id = '';
+        else if (name === 'class') this.className = '';
+        delete this.attributes[name];
+    };
+
+    DOMElement.prototype.hasAttribute = function(name) {
+        return this.attributes.hasOwnProperty(name) || (name === 'id' && Boolean(this.id)) || (name === 'class' && Boolean(this.className));
+    };
+
+    DOMElement.prototype.appendChild = function(child) {
+        if (!child) return child;
+        if (child.parentNode) child.parentNode.removeChild(child);
+        child.parentNode = this;
+        child.parentElement = this;
+        this.children.push(child);
+        return child;
+    };
+
+    DOMElement.prototype.removeChild = function(child) {
+        var idx = this.children.indexOf(child);
+        if (idx !== -1) {
+            this.children.splice(idx, 1);
+            child.parentNode = null;
+            child.parentElement = null;
+        }
+        return child;
+    };
+
+    DOMElement.prototype.insertBefore = function(newNode, referenceNode) {
+        if (!referenceNode) return this.appendChild(newNode);
+        var idx = this.children.indexOf(referenceNode);
+        if (idx !== -1) {
+            newNode.parentNode = this;
+            newNode.parentElement = this;
+            this.children.splice(idx, 0, newNode);
+        } else {
+            this.appendChild(newNode);
+        }
+        return newNode;
+    };
+
+    DOMElement.prototype.addEventListener = function(event, handler) {
+        if (!this._listeners[event]) this._listeners[event] = [];
+        this._listeners[event].push(handler);
+    };
+
+    DOMElement.prototype.removeEventListener = function(event, handler) {
+        if (!this._listeners[event]) return;
+        this._listeners[event] = this._listeners[event].filter(function(h) { return h !== handler; });
+    };
+
+    DOMElement.prototype.dispatchEvent = function(event) {
+        var ev = (typeof event === 'string') ? { type: event, target: this, currentTarget: this } : event;
+        if (!ev.target) ev.target = this;
+        if (!ev.currentTarget) ev.currentTarget = this;
+        
+        var handlers = this._listeners[ev.type] || [];
+        for (var i = 0; i < handlers.length; i++) {
+            try { handlers[i].call(this, ev); } catch(e) { console.error(e); }
+        }
+        var inlineHandler = this['on' + ev.type];
+        if (typeof inlineHandler === 'function') {
+            try { inlineHandler.call(this, ev); } catch(e) { console.error(e); }
+        }
+        return true;
+    };
+
+    DOMElement.prototype.click = function() {
+        this.dispatchEvent('click');
+    };
+
+    DOMElement.prototype.focus = function() {
+        this.dispatchEvent('focus');
+    };
+
+    DOMElement.prototype.blur = function() {
+        this.dispatchEvent('blur');
+    };
+
+    // Traversal and Query Matching
+    function _matchSelector(el, selector) {
+        selector = selector.trim();
+        if (selector === '*') return true;
+        if (selector.startsWith('#')) return el.id === selector.substring(1);
+        if (selector.startsWith('.')) return el.classList.contains(selector.substring(1));
+        if (selector.indexOf('[') !== -1) {
+            var match = selector.match(/\\[([\\w-]+)(?:=[\"']?([^\"'\\]]+)[\"']?)?\\]/);
+            if (match) {
+                var attr = match[1];
+                var val = match[2];
+                if (!el.hasAttribute(attr)) return false;
+                if (val !== undefined) return el.getAttribute(attr) === val;
+                return true;
+            }
+        }
+        return el.tagName.toLowerCase() === selector.toLowerCase();
+    }
+
+    DOMElement.prototype.querySelector = function(selector) {
+        for (var i = 0; i < this.children.length; i++) {
+            var child = this.children[i];
+            if (_matchSelector(child, selector)) return child;
+            var sub = child.querySelector(selector);
+            if (sub) return sub;
+        }
+        return null;
+    };
+
+    DOMElement.prototype.querySelectorAll = function(selector) {
+        var results = [];
+        for (var i = 0; i < this.children.length; i++) {
+            var child = this.children[i];
+            if (_matchSelector(child, selector)) results.push(child);
+            results = results.concat(child.querySelectorAll(selector));
+        }
+        return results;
+    };
+
+    DOMElement.prototype.getElementById = function(id) {
+        return this.querySelector('#' + id);
+    };
+
+    DOMElement.prototype.getElementsByClassName = function(cls) {
+        return this.querySelectorAll('.' + cls);
+    };
+
+    DOMElement.prototype.getElementsByTagName = function(tag) {
+        return this.querySelectorAll(tag);
+    };
+
+    // Global Document Object
+    var document = new DOMElement('HTML');
+    document.documentElement = document;
+    document.head = new DOMElement('HEAD');
+    document.body = new DOMElement('BODY');
+    document.appendChild(document.head);
+    document.appendChild(document.body);
+
+    document.createElement = function(tag) {
+        return new DOMElement(tag);
+    };
+    document.createTextNode = function(text) {
+        var el = new DOMElement('#text');
+        el.textContent = text;
+        return el;
+    };
+    document.createDocumentFragment = function() {
+        return new DOMElement('#document-fragment');
+    };
+    document.getElementById = function(id) {
+        return document.querySelector('#' + id);
+    };
+    document.getElementsByClassName = function(cls) {
+        return document.querySelectorAll('.' + cls);
+    };
+    document.getElementsByTagName = function(tag) {
+        return document.querySelectorAll(tag);
+    };
+
+    var localStorage = {
+        _data: {},
+        getItem: function(k) { return this._data.hasOwnProperty(k) ? this._data[k] : null; },
+        setItem: function(k, v) { this._data[k] = String(v); },
+        removeItem: function(k) { delete this._data[k]; },
+        clear: function() { this._data = {}; }
+    };
+
+    var sessionStorage = {
+        _data: {},
+        getItem: function(k) { return this._data.hasOwnProperty(k) ? this._data[k] : null; },
+        setItem: function(k, v) { this._data[k] = String(v); },
+        removeItem: function(k) { delete this._data[k]; },
+        clear: function() { this._data = {}; }
+    };
+
+    var window = {
+        document: document,
+        console: console,
+        localStorage: localStorage,
+        sessionStorage: sessionStorage,
+        setTimeout: function(fn) { try { fn(); } catch(e){} return 1; },
+        clearTimeout: function() {},
+        setInterval: function(fn) { try { fn(); } catch(e){} return 1; },
+        clearInterval: function() {},
+        addEventListener: function(ev, fn) { document.addEventListener(ev, fn); },
+        removeEventListener: function(ev, fn) { document.removeEventListener(ev, fn); },
+        dispatchEvent: function(ev) { return document.dispatchEvent(ev); },
+        alert: function(msg) { console.log('[Alert]: ' + msg); },
+        prompt: function() { return ''; },
+        confirm: function() { return true; }
+    };
+
+    function CustomEvent(event, params) {
+        params = params || { bubbles: false, cancelable: false, detail: null };
+        var evt = { type: event, detail: params.detail, target: null, currentTarget: null };
+        return evt;
+    }
+
+    // Expose globals in sandbox scope
+    globalThis.console = console;
+    globalThis.assert = assert;
+    globalThis.expect = expect;
+    globalThis.__test_results = __test_results;
+    globalThis.DOMElement = DOMElement;
+    globalThis.document = document;
+    globalThis.window = window;
+    globalThis.localStorage = localStorage;
+    globalThis.sessionStorage = sessionStorage;
+    globalThis.CustomEvent = CustomEvent;
+    globalThis.setTimeout = window.setTimeout;
+    globalThis.clearTimeout = window.clearTimeout;
+    globalThis.setInterval = window.setInterval;
+    globalThis.clearInterval = window.clearInterval;
+})();
 """
 
 
@@ -1794,6 +2098,46 @@ def test_and_evaluate_code(
             ctx.eval(_MOCK_BROWSER_SHIM)
         except Exception as e:
             logger.warning(f"Failed to load mock browser shim: {e}")
+
+        # Hydrate DOM from HTML structure
+        def _build_dom_js(tag, parent_var="document.body") -> str:
+            lines = []
+            for child in getattr(tag, "children", []):
+                if not hasattr(child, "name") or child.name is None:
+                    # Text node
+                    txt = str(child).strip()
+                    if txt:
+                        txt_escaped = json.dumps(txt)
+                        lines.append(f"{parent_var}.appendChild(document.createTextNode({txt_escaped}));")
+                    continue
+                
+                # Element node
+                var_name = f"el_{abs(hash(str(child))) % 10000000}"
+                tag_name = json.dumps(child.name)
+                lines.append(f"var {var_name} = document.createElement({tag_name});")
+                
+                for attr_k, attr_v in child.attrs.items():
+                    if isinstance(attr_v, list):
+                        attr_v = " ".join(attr_v)
+                    k_esc = json.dumps(attr_k)
+                    v_esc = json.dumps(str(attr_v))
+                    lines.append(f"{var_name}.setAttribute({k_esc}, {v_esc});")
+                
+                # Recurse children
+                child_lines = _build_dom_js(child, var_name)
+                if child_lines:
+                    lines.append(child_lines)
+                
+                lines.append(f"{parent_var}.appendChild({var_name});")
+            return "\n".join(lines)
+
+        try:
+            body_tag = soup.body if soup.body else soup
+            dom_init_script = _build_dom_js(body_tag, "document.body")
+            if dom_init_script:
+                ctx.eval(dom_init_script)
+        except Exception as dhe:
+            logger.warning(f"Failed to hydrate simulated DOM from HTML: {dhe}")
 
         # 4. Run existing scripts
         runtime_errors = []
