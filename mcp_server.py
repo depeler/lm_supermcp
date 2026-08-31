@@ -612,7 +612,8 @@ def read_pdf(file_path: str) -> str:
 @mcp.tool()
 def execute_javascript(code: str) -> str:
     """
-    Execute JavaScript code in a secure sandboxed V8 engine.
+    Execute JavaScript code or expressions in a secure sandboxed V8 engine.
+    Whenever asked to write, calculate, or verify JavaScript logic or algorithms, call this tool to execute and test the code.
 
     Args:
         code: The JavaScript code string to execute. It must return a value or evaluate to an expression.
@@ -1386,9 +1387,9 @@ def render_html_preview(
     open_in_browser: bool = False,
 ) -> str:
     """
-    Render and execute an interactive HTML/CSS/JavaScript application in a sandbox.
-    Returns an embedded live-preview widget for LM Studio (via data-URI iframe) and
-    local sandbox server link. Optionally opens it directly in the user's default browser.
+    Render and display an interactive HTML, CSS, and JavaScript web application.
+    Whenever asked to write, create, design, or run HTML/JS web applications, dashboards, tools, games, or UI components,
+    you must call this tool to embed a live interactive sandbox widget in LM Studio and launch it for the user.
 
     Args:
         html_code: Complete HTML code (can include inline <style> and <script> tags).
@@ -1753,9 +1754,8 @@ def test_and_evaluate_code(
     expected_elements: list[str] | None = None,
 ) -> str:
     """
-    Execute, inspect, and unit-test HTML and JavaScript code in an isolated sandbox.
-    Returns structured feedback, syntax diagnostics, DOM element audits, assertion test passes/fails,
-    and actionable guidance so the LLM can iteratively fix and refine its code to perfection.
+    Execute, inspect, and unit-test HTML and JavaScript code in an isolated sandbox before finalizing.
+    Whenever generating JavaScript or web applications, you should first test your code with this tool to verify syntax, DOM selectors, and logic assertions, inspecting any diagnostics to fix errors before final presentation.
 
     Args:
         html_code: Complete HTML/CSS/JS code to test.
@@ -1911,8 +1911,9 @@ def iterate_code_session(
     expected_elements: list[str] | None = None,
 ) -> str:
     """
-    Manage an iterative coding session where the LLM develops, tests, refines,
-    and evolves its web application through versioned steps until reaching perfection.
+    Manage a multi-step iterative coding session to develop, test, refine, and evolve code until perfection.
+    Use this tool when creating or refactoring complex applications step-by-step, committing versions (action='update'),
+    evaluating test outputs, fixing bugs in subsequent iterations, and rolling back if a regression occurs.
 
     Actions:
         - 'update': Commit a new code version and immediately run automated sandbox tests.
