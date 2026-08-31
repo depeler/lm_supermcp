@@ -170,9 +170,9 @@ _extract_domain = ns["_extract_domain"]
 deep_research = ns["deep_research"]
 
 # Test angle generation
-tr_angles = _generate_research_angles("Rust vs Go", is_turkish=True, depth="standard")
-check("Generates Turkish angles for standard depth", len(tr_angles) == 4)
-check("Turkish angles contain Alternatifler & Karşılaştırma", any("Alternatifler" in a["angle"] for a in tr_angles))
+angles_std = _generate_research_angles("Rust vs Go", is_turkish=False, depth="standard")
+check("Generates English angles for standard depth", len(angles_std) == 4)
+check("Standard angles contain Alternatives & Comparison", any("Alternatives" in a["angle"] for a in angles_std))
 
 deep_angles = _generate_research_angles("Quantum Computing", is_turkish=False, depth="deep")
 check("Generates English angles for deep depth", len(deep_angles) == 5)
@@ -188,7 +188,7 @@ src1_id = db.add_source(
     url="https://example.com/rust",
     title="Rust Performance Analysis",
     domain="example.com",
-    angle="Avantajlar & Güçlü Yönler",
+    angle="Pros & Key Advantages",
     snippet="Rust provides memory safety without garbage collection.",
     content="Rust provides memory safety without garbage collection and near C++ speed."
 )
@@ -199,7 +199,7 @@ src1_dup_id = db.add_source(
     url="https://example.com/rust",
     title="Rust Performance Analysis",
     domain="example.com",
-    angle="Genel Bakış",
+    angle="Overview",
     snippet="Duplicate entry test",
     content="Duplicate entry test"
 )
@@ -207,14 +207,14 @@ check("Handles duplicate source URL gracefully in SQLite", src1_dup_id == src1_i
 
 db.add_finding(
     source_id=src1_id,
-    angle="Avantajlar & Güçlü Yönler",
+    angle="Pros & Key Advantages",
     key_point="Memory Safety",
     detail="No garbage collector overhead"
 )
 
 summary = db.get_summary_by_angle()
-check("Retrieves grouped summaries by angle from SQLite", "Avantajlar & Güçlü Yönler" in summary)
-check("Summary item contains correct title", summary["Avantajlar & Güçlü Yönler"][0]["title"] == "Rust Performance Analysis")
+check("Retrieves grouped summaries by angle from SQLite", "Pros & Key Advantages" in summary)
+check("Summary item contains correct title", summary["Pros & Key Advantages"][0]["title"] == "Rust Performance Analysis")
 
 stats = db.get_stats()
 check("Reports correct SQLite DB stats", stats["sources_count"] == 1 and stats["unique_domains"] == 1)
@@ -222,6 +222,130 @@ db.close()
 
 # Test deep_research empty input validation
 check("Validates empty topic input for deep_research", "Please provide a valid topic" in deep_research(""))
+
+# =======================================================
+# 9. HTML Sandbox, Live Preview & Desktop Save Tests
+# =======================================================
+print()
+print("=" * 55)
+print("9. HTML Preview & Desktop Save Tests")
+print("=" * 55)
+
+render_html_preview = ns["render_html_preview"]
+save_code_to_desktop = ns["save_code_to_desktop"]
+run_html_sandbox = ns["run_html_sandbox"]
+_get_desktop_path = ns["_get_desktop_path"]
+
+# Test render_html_preview validation
+check("render_html_preview handles empty input", "Error: HTML code must be a non-empty string." in render_html_preview(""))
+preview_res = render_html_preview("<h1>Hello LM Studio</h1>", title="Test App")
+check("render_html_preview generates iframe and data-uri", "<iframe" in preview_res and "data:text/html;base64," in preview_res)
+check("render_html_preview provides sandbox link", "127.0.0.1:8765" in preview_res)
+
+# Test save_code_to_desktop
+desktop_dir = _get_desktop_path()
+check("Detects valid desktop directory", desktop_dir.exists())
+
+test_filename = "_test_supermcp_temp.html"
+save_res = save_code_to_desktop("<h1>SuperMCP Test</h1>", filename=test_filename, overwrite=True)
+check("Saves file to Desktop successfully", "File Successfully Saved to Desktop" in save_res)
+test_file_path = desktop_dir / test_filename
+check("File exists on Desktop and has content", test_file_path.exists() and "SuperMCP Test" in test_file_path.read_text(encoding="utf-8"))
+
+# Cleanup test file
+try:
+    if test_file_path.exists():
+        test_file_path.unlink()
+except Exception:
+    pass
+
+# Test security checks for save_code_to_desktop
+invalid_ext_res = save_code_to_desktop("malicious", filename="test.exe")
+check("Blocks unsafe executable extension on desktop save", "Security Error" in invalid_ext_res)
+
+traversal_res = save_code_to_desktop("content", filename="../../evil.html")
+check("Prevents path traversal on desktop save", "evil.html" in traversal_res and ".." not in traversal_res)
+
+# Test run_html_sandbox
+sandbox_res = run_html_sandbox("<script>console.log(40 + 2);</script>")
+check("run_html_sandbox runs JS and captures console output", "42" in sandbox_res or "Executed successfully" in sandbox_res)
+
+sandbox_blocked = run_html_sandbox("<script>document.cookie = 'test';</script>")
+check("run_html_sandbox blocks disallowed patterns", "Blocked - Disallowed pattern detected" in sandbox_blocked)
+
+# =======================================================
+# 10. Self-Testing & Iterative Code Evolution Tests
+# =======================================================
+print()
+print("=" * 55)
+print("10. Self-Testing & Code Iteration Tests")
+print("=" * 55)
+
+test_and_evaluate_code = ns["test_and_evaluate_code"]
+iterate_code_session = ns["iterate_code_session"]
+
+# Test test_and_evaluate_code with passing assertions
+sample_html = """
+<!DOCTYPE html>
+<html>
+<head><title>Counter App</title></head>
+<body>
+  <div id="counter-val">0</div>
+  <button id="btn-inc">Add</button>
+  <script>
+    function add(a, b) { return a + b; }
+    var count = 0;
+    count = add(count, 5);
+  </script>
+</body>
+</html>
+"""
+
+eval_res = test_and_evaluate_code(
+    html_code=sample_html,
+    test_script="expect(add(2, 3)).toBe(5, 'add function works'); assert(count === 5, 'initial count is 5');",
+    expected_elements=["#counter-val", "#btn-inc"]
+)
+check("test_and_evaluate_code confirms successful tests", "TESTS PASSED" in eval_res and "[PASS]" in eval_res)
+check("test_and_evaluate_code verifies expected DOM selectors", "Selector `#counter-val` found" in eval_res)
+
+# Test test_and_evaluate_code detecting errors
+failing_eval = test_and_evaluate_code(
+    html_code=sample_html,
+    test_script="assert(count === 999, 'count must be 999');",
+    expected_elements=["#non-existent-id"]
+)
+check("test_and_evaluate_code detects assertion failure", "[FAIL]" in failing_eval and "ISSUES/ERRORS DETECTED" in failing_eval)
+check("test_and_evaluate_code detects missing DOM selector", "Selector `#non-existent-id` NOT found" in failing_eval)
+
+# Test iterate_code_session workflow
+session_id = "test_calc_session"
+iter1_res = iterate_code_session(
+    session_id=session_id,
+    action="update",
+    code="<html><script>var x = 10;</script></html>",
+    test_script="assert(x === 10, 'x is 10');",
+    note="Initial version"
+)
+check("iterate_code_session creates version 1", "v1" in iter1_res and "TESTS PASSED" in iter1_res)
+
+iter2_res = iterate_code_session(
+    session_id=session_id,
+    action="update",
+    code="<html><script>var x = 20;</script></html>",
+    test_script="assert(x === 20, 'x is 20');",
+    note="Updated x to 20"
+)
+check("iterate_code_session creates version 2", "v2" in iter2_res)
+
+hist_res = iterate_code_session(session_id=session_id, action="history")
+check("iterate_code_session retrieves version history", "v1" in hist_res and "v2" in hist_res)
+
+latest_res = iterate_code_session(session_id=session_id, action="get_latest")
+check("iterate_code_session retrieves latest version code", "var x = 20" in latest_res)
+
+rollback_res = iterate_code_session(session_id=session_id, action="rollback")
+check("iterate_code_session rolls back version", "Rolled Back" in rollback_res and "v1" in rollback_res)
 
 
 print()
@@ -231,6 +355,8 @@ print(f"Results: {passed}/{total} tests passed" + (" — ALL OK" if failed == 0 
 print("=" * 55)
 
 sys.exit(0 if failed == 0 else 1)
+
+
 
 
 

@@ -1,80 +1,82 @@
-# Katkıda Bulunma Rehberi
+# Contributing Guidelines
 
-Teşekkürler! LM Studio Web Browser & JS MCP Server'a katkıda bulunmaktan mutlu olurum.
+Thank you for your interest in contributing to the LM Studio Web Browser & JS MCP Server!
 
-## Kurulum
+## Setup
 
-Katkıda bulunmadan önce projeyi yerel olarak kurmanız gerekir:
+Before contributing, set up the project locally:
 
 ```bash
-# Repoyu klonlayın
+# Clone the repository
 git clone https://github.com/depeler/lm_supermcp.git
 
-# Klasöre girin ve virtual environment oluşturun
+# Navigate to the folder and create a virtual environment
 cd lm_supermcp
 python -m venv venv
 
-# Windows'ta virtual environment'i aktif edin
+# Activate the virtual environment (Windows)
 venv\Scripts\activate
+# Or on macOS/Linux:
+# source venv/bin/activate
 
-# Gerekli kütüphaneleri yükleyin
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Kod Kalitesi
+## Code Quality
 
-### Python Stili
+### Python Style
 
-Proje [PEP 8](https://pep8.org/) stiline uyar. `black` ve `flake8` kullanarak otomatik formatlama yapabilirsiniz:
+The project adheres to [PEP 8](https://pep8.org/). You can use `black` and `flake8` for formatting and linting:
 
 ```bash
-# Formatla
+# Format code
 black mcp_server.py
 
-# Stil kontrolü
+# Lint code
 flake8 mcp_server.py
 ```
 
-### Testler
+### Running Tests
 
-Yeni özellikler eklediğinizden emin olun:
+Ensure all tests pass before submitting changes:
 
 ```bash
 python test_security.py
 python test_mcp.py
 ```
 
-## Katkı Adımları
+## Contribution Steps
 
-1. **Fork edin**: Repoyu GitHub'da fork edin
-2. **Branch oluşturun**: `git checkout -b feature/amazing-feature`
-3. **Değişiklikler yapın** ve commit'in:
+1. **Fork the repo**: Fork the repository on GitHub.
+2. **Create a branch**: `git checkout -b feature/amazing-feature`
+3. **Make your changes** and commit:
    ```bash
-   git commit -m "feat: amazing feature eklendi"
+   git commit -m "feat: add amazing feature"
    ```
-4. **Push edin**: `git push origin feature/amazing-feature`
-5. **Pull Request açın**: GitHub web arayüzünden PR oluşturun
+4. **Push your branch**: `git push origin feature/amazing-feature`
+5. **Open a Pull Request**: Submit your PR on GitHub with a clear description.
 
-## Commit Mesajları
+## Commit Messages
 
-[Conventional Commits](https://www.conventionalcommits.org/) formatını kullanın:
+Please follow the [Conventional Commits](https://www.conventionalcommits.org/) convention:
 
-- `fix:` - Bug düzeltmeleri
-- `feat:` - Yeni özellikler
-- `docs:` - Dokümantasyon değişiklikleri
-- `refactor:` - Kod yeniden düzenleme
-- `test:` - Test eklemeleri/düzeltmeleri
-- `chore:` - Diğer değişiklikler
+- `fix:` - Bug fixes
+- `feat:` - New features
+- `docs:` - Documentation changes
+- `refactor:` - Code refactoring
+- `test:` - Adding or fixing tests
+- `chore:` - Miscellaneous tasks
 
-## Kod Dergüsü Kuralları
+## Security Rules
 
-- URL doğrulama korumasını asla atlayın
-- JavaScript güvenlik filtrelerini değiştirmeyin
-- Rate limit ayarlarını dikkatli değiştirin
-- Tüm API isteklerinde hata yönetimi ekleyin
+- Never bypass URL validation safeguards.
+- Do not remove JavaScript security restrictions.
+- Be cautious when modifying rate limiting thresholds.
+- Always include safe error handling on all API requests.
 
-## Sorularınız?
+## Questions?
 
-Sorularınız için [README.md](./README.md) dosyasını kontrol edin veya issues sekmesinde açın.
+Check the [README.md](./README.md) file or open an issue on GitHub.
 
-Teşekkürler! 🙏
+Thank you! 🙏

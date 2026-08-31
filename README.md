@@ -4,6 +4,13 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 
 ## Recent Updates
 
+### v3.5 — LLM Self-Testing, Iterative Code Refinement & Desktop Sandbox
+- **`test_and_evaluate_code` Tool:** Enables the model to run automated unit tests (`assert`, `expect().toBe()`), DOM selector audits, and runtime error diagnostics on its own HTML/JS code before presenting it.
+- **`iterate_code_session` Tool:** Supports multi-step code evolution (`update`, `get_latest`, `history`, `rollback`). The LLM can write v1, auto-test it, observe failure diagnostics, refine into v2/v3, and lock the best working version.
+- **`render_html_preview` Tool:** Renders complete HTML, CSS, and JS web applications with live interactive iframe (base64 data URI) in LM Studio and local sandbox server link (`http://127.0.0.1:8765/preview_...`).
+- **`save_code_to_desktop` Tool:** Saves generated files directly to the user's Desktop with extension & path security checks.
+- **`run_html_sandbox` Tool:** Executes HTML/JS headless in a secure V8 engine, capturing DOM element structure and `console.log` output.
+
 ### v3.3 — Deep Multi-Angle Web Research & Reasoning (SQLite-backed)
 - **`deep_research` Tool:** Deconstructs complex topics into multiple critical perspectives (Overview, Pros/Advantages, Cons/Risks, Alternatives/Comparisons, Future Trends) and queries the web concurrently.
 - **In-Memory SQLite Research Session:** Deduplicates web sources, extracts structured findings per angle, and normalizes findings in an isolated in-memory SQLite database (`:memory:`).
@@ -47,6 +54,11 @@ This project is a high-performance and comprehensive **Model Context Protocol (M
 | 10 | `translate_text` | Translates text to the desired language (default: Turkish). Input length is validated (max 10,000 chars). |
 | 11 | `search_images` | Performs image search on the internet and sends found images directly to the model's visual memory. |
 | 12 | `search_prices` | Searches and compares product prices locally (Turkey) or globally (worldwide) with structured store & price listings. |
+| 13 | `render_html_preview` | **Renders live interactive HTML/JS applications in LM Studio iframe & sandbox server**, with option to launch in default browser. |
+| 14 | `save_code_to_desktop` | **Saves code files (HTML, JS, CSS, Python, etc.) directly to the user's Desktop** with path security checks. |
+| 15 | `run_html_sandbox` | **Executes HTML and JavaScript in a secure sandbox**, capturing console output and analyzing DOM elements. |
+| 16 | `test_and_evaluate_code` | **Runs automated unit tests, assertion checks, and DOM audits** on generated code with actionable diagnostic guidance. |
+| 17 | `iterate_code_session` | **Manages iterative code evolution and version tracking** (`update`, `rollback`, `history`) until the app reaches perfection. |
 
 ## Security Overview
 

@@ -13,12 +13,18 @@ SECURITY MEASURES IMPLEMENTED:
 - Safe error handling that doesn't leak internals
 """
 
+import os
 import re
 import sys
+import json
 import time
 import logging
 import threading
 import sqlite3
+import webbrowser
+from pathlib import Path
+from http.server import SimpleHTTPRequestHandler
+from socketserver import TCPServer
 from datetime import datetime, timezone
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -223,11 +229,10 @@ _MULTI_NEWLINE = re.compile(r"\n{3,}")
 # Elements to remove from HTML (defined once, not per call)
 _NOISY_TAGS = ["script", "style", "nav", "footer", "header", "aside", "form", "noscript", "iframe", "svg"]
 
-# Turkish day names (constant)
-_DAYS_TR = {
-    "Monday": "Pazartesi", "Tuesday": "Salı", "Wednesday": "Çarşamba",
-    "Thursday": "Perşembe", "Friday": "Cuma", "Saturday": "Cumartesi", "Sunday": "Pazar",
-}
+# English day names (constant)
+_DAYS = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
+]
 
 # Content limit
 _MAX_CONTENT_LENGTH = 8000
@@ -243,9 +248,9 @@ def _get_datetime_header() -> str:
     """Return current date, time, and day information as a header string for tool responses."""
     now = datetime.now()
     utc_now = datetime.now(timezone.utc)
-    day_tr = _DAYS_TR.get(now.strftime("%A"), now.strftime("%A"))
+    day_name = now.strftime("%A")
     return (
-        f"[Current DateTime: {now.strftime('%Y-%m-%d %H:%M:%S')} (Day: {day_tr} / {now.strftime('%A')}) | UTC: {utc_now.strftime('%Y-%m-%d %H:%M:%S')}]\n\n"
+        f"[Current DateTime: {now.strftime('%Y-%m-%d %H:%M:%S')} (Day: {day_name}) | UTC: {utc_now.strftime('%Y-%m-%d %H:%M:%S')}]\n\n"
     )
 
 
@@ -648,12 +653,12 @@ def get_current_datetime() -> str:
     """
     now = datetime.now()
     utc_now = datetime.now(timezone.utc)
-    day_tr = _DAYS_TR.get(now.strftime("%A"), now.strftime("%A"))
+    day_name = now.strftime("%A")
 
     return (
         f"Local Date: {now.strftime('%Y-%m-%d')}\n"
         f"Local Time: {now.strftime('%H:%M:%S')}\n"
-        f"Day: {day_tr} ({now.strftime('%A')})\n"
+        f"Day: {day_name}\n"
         f"UTC Time: {utc_now.strftime('%Y-%m-%d %H:%M:%S')}"
     )
 
@@ -918,7 +923,7 @@ def search_prices(
             # Combine snippet and page preview for price extraction
             combined_text = f"{title}\n{snippet}\n{page_text[:1500]}"
             prices = _extract_prices_from_text(combined_text, scope=effective_scope)
-            price_display = ", ".join(prices[:2]) if prices else "Linke Bakınız"
+            price_display = ", ".join(prices[:2]) if prices else "See Link"
             merchant = _guess_merchant_name(url)
 
             # Sanitize table columns (escape markdown pipes)
@@ -927,25 +932,25 @@ def search_prices(
             clean_price = price_display.replace("|", "-").strip()
 
             # Include explicit URL markdown link
-            link_markdown = f"[{clean_merchant} Satın Alma Linki]({url})"
+            link_markdown = f"[{clean_merchant} Purchase Link]({url})"
             rows.append(f"| {i} | {clean_merchant} | {clean_title} | **{clean_price}** | {link_markdown} |")
 
             detailed_findings.append(
                 f"### {i}. {clean_merchant}: {title}\n"
-                f"- **Satın Alma / Ürün Linki:** {url}\n"
-                f"- **Bulunan Fiyat:** {price_display}\n"
-                f"- **Özet:** {snippet}\n"
+                f"- **Purchase / Product Link:** {url}\n"
+                f"- **Detected Price:** {price_display}\n"
+                f"- **Summary:** {snippet}\n"
             )
 
-        scope_label = "Türkiye (Yerel)" if effective_scope == "tr" else "Global (Dünya Çapı)"
+        scope_label = "Local (Regional)" if effective_scope == "tr" else "Global (Worldwide)"
         output = [
-            f"## 🔎 Fiyat Karşılaştırma Tablosu: '{query}'",
-            f"**Kapsam:** {scope_label} | **Bulunan Sonuç:** {len(raw_results)}\n",
-            "| # | Mağaza / Satıcı | Ürün Başlığı | Fiyat | Satın Alma Linki |",
-            "|---|-----------------|--------------|-------|------------------|",
+            f"## 🔎 Price Comparison Table: '{query}'",
+            f"**Scope:** {scope_label} | **Results Found:** {len(raw_results)}\n",
+            "| # | Store / Merchant | Product Title | Price | Purchase Link |",
+            "|---|------------------|---------------|-------|---------------|",
             *rows,
             "\n---\n",
-            "### 📋 Satın Alma Linkleri ve Mağaza Detayları\n",
+            "### 📋 Store Details & Purchase Links\n",
             "\n".join(detailed_findings)
         ]
 
@@ -1069,65 +1074,38 @@ class ResearchSessionDB:
             pass
 
 
-def _generate_research_angles(topic: str, is_turkish: bool, depth: str = "standard") -> list[dict[str, str]]:
+def _generate_research_angles(topic: str, is_turkish: bool = False, depth: str = "standard") -> list[dict[str, str]]:
     """Generate multi-angle search queries and perspectives for deep research."""
     t = topic.strip()
-    angles: list[dict[str, str]] = []
-
-    if is_turkish:
-        angles.append({
-            "angle": "Genel Tanım ve Güncel Durum",
-            "query": f"{t} nedir genel bakış son gelişmeler",
-            "description": "Temel tanım, çalışma mantığı ve mevcut durum",
-        })
-        angles.append({
-            "angle": "Avantajlar & Güçlü Yönler",
-            "query": f"{t} avantajları faydaları neden kullanılır güçlü yönleri",
-            "description": "Öne çıkan faydalar ve kullanım gerekçeleri",
-        })
-        angles.append({
-            "angle": "Dezavantajlar & Riskler",
-            "query": f"{t} dezavantajları riskleri eleştiriler sorunlar limitler",
-            "description": "Riskler, sınırlamalar ve karşılaşılan zorluklar",
-        })
-        angles.append({
-            "angle": "Alternatifler & Karşılaştırma",
-            "query": f"{t} alternatifleri vs benzerleri karşılaştırma farkları",
-            "description": "Yakın/benzer teknolojiler veya yaklaşımlarla mukayese",
-        })
-        if depth == "deep":
-            angles.append({
-                "angle": "Uzman Görüşleri & Gelecek Trendleri",
-                "query": f"{t} geleceği trendler uzman yorumları best practices",
-                "description": "Gelecek projeksiyonları ve en iyi uygulama pratikleri",
-            })
-    else:
-        angles.append({
+    angles: list[dict[str, str]] = [
+        {
             "angle": "Overview & Current State",
             "query": f"{t} overview latest updates architecture",
             "description": "Core definition, architecture, and current state",
-        })
-        angles.append({
+        },
+        {
             "angle": "Pros & Key Advantages",
             "query": f"{t} benefits advantages why use strengths",
             "description": "Primary advantages and use-case strengths",
-        })
-        angles.append({
+        },
+        {
             "angle": "Cons, Risks & Trade-offs",
             "query": f"{t} disadvantages cons risks limitations trade-offs criticism",
             "description": "Weaknesses, limitations, and key trade-offs",
-        })
-        angles.append({
+        },
+        {
             "angle": "Alternatives & Comparison",
             "query": f"{t} alternatives vs comparison benchmark differences",
             "description": "Direct comparisons with alternatives and competitors",
+        },
+    ]
+
+    if depth == "deep":
+        angles.append({
+            "angle": "Future Outlook & Best Practices",
+            "query": f"{t} future trends expert opinions best practices",
+            "description": "Future trajectory, real-world patterns, and best practices",
         })
-        if depth == "deep":
-            angles.append({
-                "angle": "Future Outlook & Best Practices",
-                "query": f"{t} future trends expert opinions best practices",
-                "description": "Future trajectory, real-world patterns, and best practices",
-            })
 
     return angles
 
@@ -1148,7 +1126,7 @@ def _extract_domain(url: str) -> str:
 def deep_research(
     topic: str,
     depth: str = "standard",
-    region: str = "tr-tr",
+    region: str = "wt-wt",
     custom_angles: list[str] | None = None,
 ) -> str:
     """
@@ -1162,7 +1140,7 @@ def deep_research(
     Args:
         topic: The topic, question, technology, or concept to research.
         depth: 'standard' (4 angles, ~8-12 sources) or 'deep' (5 angles, ~15-20 sources).
-        region: Region code for search (default: 'tr-tr' for Turkish, 'wt-wt' for global).
+        region: Region code for search (default: 'wt-wt' for global).
         custom_angles: Optional list of custom query angles to investigate alongside default ones.
     """
     if not topic or not topic.strip():
@@ -1171,15 +1149,7 @@ def deep_research(
     topic = topic.strip()
     depth_clean = "deep" if depth.lower().strip() == "deep" else "standard"
     max_per_angle = 3 if depth_clean == "standard" else 4
-
-    # Detect language preference
-    is_turkish = (
-        region.lower().startswith("tr")
-        or any(c in topic.lower() for c in ["ç", "ğ", "ı", "ö", "ş", "ü"])
-        or any(w in topic.lower().split() for w in ["nedir", "nasil", "nasıl", "vs", "karsilastirma", "kıyaslama", "farklar"])
-    )
-
-    effective_region = "tr-tr" if is_turkish else region
+    effective_region = region
 
     # Rate limiting
     if not _rate_limiter.acquire():
@@ -1188,15 +1158,15 @@ def deep_research(
     logger.info(f"Initiating deep research for topic='{topic}', depth={depth_clean}, region={effective_region}")
 
     # 1. Determine Angles
-    angle_definitions = _generate_research_angles(topic, is_turkish, depth_clean)
+    angle_definitions = _generate_research_angles(topic, False, depth_clean)
     if custom_angles and isinstance(custom_angles, list):
         for ca in custom_angles[:3]:
             if isinstance(ca, str) and ca.strip():
                 ca_clean = ca.strip()
                 angle_definitions.append({
-                    "angle": f"Özel Boyut: {ca_clean}" if is_turkish else f"Custom Angle: {ca_clean}",
+                    "angle": f"Custom Angle: {ca_clean}",
                     "query": f"{topic} {ca_clean}",
-                    "description": f"Kullanıcı tanımlı araştırma boyutu: {ca_clean}",
+                    "description": f"User-defined research angle: {ca_clean}",
                 })
 
     # 2. SQLite In-Memory Research DB
@@ -1226,7 +1196,7 @@ def deep_research(
 
         if not all_fetch_tasks:
             db.close()
-            return _get_datetime_header() + f"Konu hakkında yeterli araştırma sonucu bulunamadı: '{topic}'"
+            return _get_datetime_header() + f"Not enough research results found for: '{topic}'"
 
         # Step 2b: Parallel webpage fetching
         unique_urls = list({task[0]: task for task in all_fetch_tasks}.values())
@@ -1271,44 +1241,25 @@ def deep_research(
         stats = db.get_stats()
 
         # Build output Markdown
-        header_title = f"🔬 ÇOK YÖNLÜ DERİN ARAŞTIRMA & AKIL YÜRÜTME RAPORU" if is_turkish else "🔬 MULTI-ANGLE DEEP RESEARCH & REASONING REPORT"
+        header_title = "🔬 MULTI-ANGLE DEEP RESEARCH & REASONING REPORT"
         sub_info = (
-            f"**Araştırılan Konu:** `{topic}` | **Derinlik Modu:** `{depth_clean.upper()}` | **İncelenen Toplam Kaynak:** `{stats['sources_count']}` ({stats['unique_domains']} farklı domain)"
-            if is_turkish
-            else f"**Research Topic:** `{topic}` | **Depth Mode:** `{depth_clean.upper()}` | **Total Sources Analyzed:** `{stats['sources_count']}` ({stats['unique_domains']} unique domains)"
+            f"**Research Topic:** `{topic}` | **Depth Mode:** `{depth_clean.upper()}` | **Total Sources Analyzed:** `{stats['sources_count']}` ({stats['unique_domains']} unique domains)"
         )
 
-        # Section 0: Research Methodology & Trace Log (İzlenen Yöntemler ve Aşamalar)
-        if is_turkish:
-            methodology_items = []
-            for idx, a in enumerate(angle_definitions, 1):
-                methodology_items.append(
-                    f"  {idx}. **{a['angle']}**: `{a['query']}` *(Amacı: {a.get('description', '')})*"
-                )
-
-            methodology_section = (
-                "## 🛠️ İzlenen Araştırma Yöntemi & Yürütülen Aşamalar\n"
-                "1. **🔍 Çok Boyutlu Sorgu Ayrıştırma:** Konu bağımsız 5 farklı kritik araştırma perspektifine bölündü:\n"
-                + "\n".join(methodology_items) + "\n\n"
-                f"2. **⚡ Paralel Web Taraması:** DuckDuckGo ve Concurrent HTTP Workers ile toplam **{len(unique_urls)} benzersiz bağlantı** eş zamanlı ziyaret edildi.\n"
-                f"3. **💾 Geçici SQLite Bellek İndeksi (`:memory:`):** Toplanan tüm kaynaklar tekilleştirildi, `{stats['unique_domains']}` farklı domain filtrelendi ve içerikler yapısal olarak sınıflandırıldı.\n"
-                "4. **⚖️ Karşılaştırmalı Çıkarım & Sentezleme:** Elde edilen bulgular, benzer alternatiflerle karşılaştırma ve fikir birliği analizine tabi tutuldu.\n"
+        methodology_items = []
+        for idx, a in enumerate(angle_definitions, 1):
+            methodology_items.append(
+                f"  {idx}. **{a['angle']}**: `{a['query']}` *(Goal: {a.get('description', '')})*"
             )
-        else:
-            methodology_items = []
-            for idx, a in enumerate(angle_definitions, 1):
-                methodology_items.append(
-                    f"  {idx}. **{a['angle']}**: `{a['query']}` *(Goal: {a.get('description', '')})*"
-                )
 
-            methodology_section = (
-                "## 🛠️ Executed Research Methodology & Trace\n"
-                "1. **🔍 Multi-Perspective Query Decomposition:** Deconstructed the research topic into distinct analytical angles:\n"
-                + "\n".join(methodology_items) + "\n\n"
-                f"2. **⚡ Parallel Web Ingestion:** Concurrently fetched and parsed **{len(unique_urls)} unique URLs** using pooled HTTP workers.\n"
-                f"3. **💾 In-Memory SQLite Aggregation (`:memory:`):** Deduplicated entries across `{stats['unique_domains']}` domains and indexed findings structurally.\n"
-                "4. **⚖️ Comparative Synthesis & Reasoning:** Clustered pros/cons, trade-offs, and competitor benchmarks into actionable insights.\n"
-            )
+        methodology_section = (
+            "## 🛠️ Executed Research Methodology & Trace\n"
+            "1. **🔍 Multi-Perspective Query Decomposition:** Deconstructed the research topic into distinct analytical angles:\n"
+            + "\n".join(methodology_items) + "\n\n"
+            f"2. **⚡ Parallel Web Ingestion:** Concurrently fetched and parsed **{len(unique_urls)} unique URLs** using pooled HTTP workers.\n"
+            f"3. **💾 In-Memory SQLite Aggregation (`:memory:`):** Deduplicated entries across `{stats['unique_domains']}` domains and indexed findings structurally.\n"
+            "4. **⚖️ Comparative Synthesis & Reasoning:** Clustered pros/cons, trade-offs, and competitor benchmarks into actionable insights.\n"
+        )
 
         sections: list[str] = [
             f"# {header_title}\n",
@@ -1316,7 +1267,7 @@ def deep_research(
             "\n---\n",
             methodology_section,
             "\n---\n",
-            "## 🧭 1. Boyutsal Bulgular ve Perspektif Analizi\n" if is_turkish else "## 🧭 1. Multi-Angle Perspectives & Findings\n"
+            "## 🧭 1. Multi-Angle Perspectives & Findings\n"
         ]
 
         for angle_def in angle_definitions:
@@ -1346,42 +1297,23 @@ def deep_research(
                 sections.append(f"> {extract[:400]}...\n")
 
         # Step 4: Add Comparative Synthesis & Reasoning Template Section
-        if is_turkish:
-            sections.append("\n---\n")
-            sections.append("## ⚖️ 2. Karşılaştırmalı Değerlendirme & Alternatif Analizi")
-            sections.append(
-                "Aşağıda araştırılan konunun benzer/rakip alternatifler ve farklı kullanım senaryoları ile karşılaştırılması yer almaktadır:\n"
-            )
-            sections.append("| Boyut / Kriter | İncelenen Konu (`" + topic + "`) | Yakın / Benzer Alternatifler |")
-            sections.append("|---|---|---|")
-            sections.append("| **Temel Odak Noktası** | Birincil kullanım alanı ve temel vaadi | Alternatif çözümlerin yöneldiği farklı alanlar |")
-            sections.append("| **Güçlü Yönler (Pros)** | Hız, esneklik, topluluk veya mimari avantajlar | Alternatiflerin daha iyi yaptığı noktalar |")
-            sections.append("| **Riskler & Dikkat Edilmesi Gerekenler** | Karmaşıklık, maliyet, öğrenme eğrisi veya limitler | Alternatiflerdeki olası dezavantajlar |")
-            sections.append("\n---\n")
-            sections.append("## 🧠 3. Çıkarım & Akıl Yürütme (Synthesized Insights)")
-            sections.append(
-                f"- **Ortak Mutabakat (Consensus):** Kaynakların çoğu `{topic}` konusunda temel gereksinim ve çözümler üzerinde hemfikirdir.\n"
-                f"- **Çelişen Görüşler / Tartışmalar:** Performans, ölçeklenebilirlik veya geçiş maliyeti konularında farklı kullanım senaryolarına göre görüş ayrılıkları mevcuttur.\n"
-                f"- **Stratejik Tavsiye:** Bu konuyu projenizde veya kararınızda değerlendirirken alternatiflerle olan trade-off (ödünleşim) dengesini göz önünde bulundurunuz."
-            )
-        else:
-            sections.append("\n---\n")
-            sections.append("## ⚖️ 2. Comparative Matrix & Alternative Analysis")
-            sections.append(
-                "Direct comparison between the main subject and closely related alternatives/approaches:\n"
-            )
-            sections.append("| Dimension / Criteria | Subject (`" + topic + "`) | Key Alternatives & Counterparts |")
-            sections.append("|---|---|---|")
-            sections.append("| **Core Focus** | Primary target capability & proposition | Alternative paradigms or competing solutions |")
-            sections.append("| **Strengths (Pros)** | Performance, velocity, ecosystem, or ease-of-use | Where alternative tools outperform |")
-            sections.append("| **Trade-offs & Risks** | Complexity, learning curve, overhead, or limits | Weaknesses observed in alternative approaches |")
-            sections.append("\n---\n")
-            sections.append("## 🧠 3. Reasoning & Synthesized Insights")
-            sections.append(
-                f"- **General Consensus:** Sources align on the primary capabilities and intended architecture of `{topic}`.\n"
-                f"- **Key Debates / Trade-offs:** Nuanced trade-offs exist around implementation cost vs. long-term maintainability across different scale thresholds.\n"
-                f"- **Strategic Recommendation:** Tailor your adoption or decision based on specific ecosystem constraints and operational trade-offs."
-            )
+        sections.append("\n---\n")
+        sections.append("## ⚖️ 2. Comparative Matrix & Alternative Analysis")
+        sections.append(
+            "Direct comparison between the main subject and closely related alternatives/approaches:\n"
+        )
+        sections.append("| Dimension / Criteria | Subject (`" + topic + "`) | Key Alternatives & Counterparts |")
+        sections.append("|---|---|---|")
+        sections.append("| **Core Focus** | Primary target capability & proposition | Alternative paradigms or competing solutions |")
+        sections.append("| **Strengths (Pros)** | Performance, velocity, ecosystem, or ease-of-use | Where alternative tools outperform |")
+        sections.append("| **Trade-offs & Risks** | Complexity, learning curve, overhead, or limits | Weaknesses observed in alternative approaches |")
+        sections.append("\n---\n")
+        sections.append("## 🧠 3. Reasoning & Synthesized Insights")
+        sections.append(
+            f"- **General Consensus:** Sources align on the primary capabilities and intended architecture of `{topic}`.\n"
+            f"- **Key Debates / Trade-offs:** Nuanced trade-offs exist around implementation cost vs. long-term maintainability across different scale thresholds.\n"
+            f"- **Strategic Recommendation:** Tailor your adoption or decision based on specific ecosystem constraints and operational trade-offs."
+        )
 
         db.close()
         return _get_datetime_header() + "\n".join(sections)
@@ -1390,6 +1322,689 @@ def deep_research(
         db.close()
         logger.error(f"Error in deep_research: {exc}")
         return f"Error occurred during deep research: Request timed out or service unavailable."
+
+
+# ---------------------------------------------------------------------------
+# Sandbox Preview Server State & Helpers
+# ---------------------------------------------------------------------------
+_SANDBOX_DIR = Path.home() / ".supermcp_sandbox"
+_SANDBOX_PORT = 8765
+_preview_server: TCPServer | None = None
+_preview_server_thread: threading.Thread | None = None
+_server_lock = threading.Lock()
+
+
+def _ensure_sandbox_server() -> int:
+    """Ensure the local sandbox preview HTTP server is running."""
+    global _preview_server, _preview_server_thread
+    with _server_lock:
+        _SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
+        if _preview_server is not None:
+            return _SANDBOX_PORT
+
+        class QuietSandboxHandler(SimpleHTTPRequestHandler):
+            def __init__(self, *args: Any, **kwargs: Any):
+                super().__init__(*args, directory=str(_SANDBOX_DIR), **kwargs)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                # Suppress stdout/stderr noise from HTTP server
+                pass
+
+        try:
+            # Allow port reuse
+            TCPServer.allow_reuse_address = True
+            server = TCPServer(("127.0.0.1", _SANDBOX_PORT), QuietSandboxHandler)
+            _preview_server = server
+            _preview_server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+            _preview_server_thread.start()
+            logger.info(f"Sandbox preview server started at http://127.0.0.1:{_SANDBOX_PORT}")
+            return _SANDBOX_PORT
+        except Exception as e:
+            logger.warning(f"Could not bind sandbox server on port {_SANDBOX_PORT}: {e}")
+            return _SANDBOX_PORT
+
+
+def _get_desktop_path() -> Path:
+    """Return user's Desktop directory safely across Windows and other OS."""
+    desktop = Path.home() / "Desktop"
+    if not desktop.exists():
+        # Fallback or OneDrive desktop detection on Windows
+        onedrive_desktop = Path.home() / "OneDrive" / "Desktop"
+        if onedrive_desktop.exists():
+            return onedrive_desktop
+        desktop.mkdir(parents=True, exist_ok=True)
+    return desktop
+
+
+# ---------------------------------------------------------------------------
+# Tool 13: Render HTML & JS Preview (Live LM Studio & Browser Sandbox)
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def render_html_preview(
+    html_code: str,
+    title: str = "Live Web App / Preview",
+    open_in_browser: bool = False,
+) -> str:
+    """
+    Render and execute an interactive HTML/CSS/JavaScript application in a sandbox.
+    Returns an embedded live-preview widget for LM Studio (via data-URI iframe) and
+    local sandbox server link. Optionally opens it directly in the user's default browser.
+
+    Args:
+        html_code: Complete HTML code (can include inline <style> and <script> tags).
+        title: Title of the application/component.
+        open_in_browser: If True, opens the rendered app immediately in the default web browser.
+    """
+    logger.info(f"Rendering HTML preview: '{title}' (open_in_browser={open_in_browser})")
+
+    if not isinstance(html_code, str) or not html_code.strip():
+        return "Error: HTML code must be a non-empty string."
+
+    if len(html_code) > 500000:
+        return "Error: HTML content too large (max 500 KB)."
+
+    # Complete HTML document structure if missing
+    clean_code = html_code.strip()
+    if not ("<html" in clean_code.lower() or "<!doctype html>" in clean_code.lower()):
+        full_html = (
+            "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+            "  <meta charset=\"UTF-8\">\n"
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+            f"  <title>{title}</title>\n"
+            "  <style>\n"
+            "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 16px; color: #1e293b; }\n"
+            "  </style>\n"
+            "</head>\n<body>\n"
+            f"{clean_code}\n"
+            "</body>\n</html>"
+        )
+    else:
+        full_html = clean_code
+
+    # 1. Base64 data URI for LM Studio direct iframe preview
+    b64_html = base64.b64encode(full_html.encode("utf-8")).decode("utf-8")
+    data_uri = f"data:text/html;base64,{b64_html}"
+
+    # 2. Write to local sandbox directory for instant local HTTP preview
+    _SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
+    file_id = f"preview_{int(time.time() * 1000)}.html"
+    preview_file = _SANDBOX_DIR / file_id
+    preview_file.write_text(full_html, encoding="utf-8")
+
+    port = _ensure_sandbox_server()
+    local_url = f"http://127.0.0.1:{port}/{file_id}"
+
+    # 3. Open in default browser if requested
+    browser_msg = ""
+    if open_in_browser:
+        try:
+            webbrowser.open(local_url)
+            browser_msg = f"🚀 **Opened in default browser:** [{local_url}]({local_url})\n"
+        except Exception as be:
+            logger.warning(f"Failed to open browser: {be}")
+            browser_msg = f"⚠️ Could not open browser ({be}), but local sandbox URL is ready.\n"
+
+    # Build comprehensive visual output for LM Studio
+    output = [
+        f"## 🖥️ Live Preview: {title}\n",
+        browser_msg,
+        f"🔗 **Live Sandbox Link:** [{local_url}]({local_url})\n",
+        "### 📱 LM Studio Interactive View (Live Sandbox)",
+        f'<iframe src="{data_uri}" style="width:100%; height:450px; border:1px solid #e2e8f0; border-radius:8px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);" sandbox="allow-scripts allow-modals allow-forms"></iframe>\n',
+        "*(Note: The embedded window above runs interactively inside the LM Studio chat UI. You can also click the link to view in your browser or use the desktop save tool.)*\n",
+        "```html",
+        full_html[:1500] + ("\n...[remaining code truncated]..." if len(full_html) > 1500 else ""),
+        "```"
+    ]
+
+    return _get_datetime_header() + "\n".join(output)
+
+
+# ---------------------------------------------------------------------------
+# Tool 14: Save Code or Web App to Desktop
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def save_code_to_desktop(
+    code: str,
+    filename: str = "index.html",
+    overwrite: bool = True,
+) -> str:
+    """
+    Save written HTML, JavaScript, CSS, or any code file directly to the user's Desktop.
+
+    Args:
+        code: Content of the file to save.
+        filename: Desired file name (e.g. 'index.html', 'app.js', 'dashboard.html', 'calculator.html').
+        overwrite: Whether to overwrite if the file already exists (default: True).
+    """
+    logger.info(f"Saving file to Desktop: '{filename}'")
+
+    if not isinstance(code, str) or not code.strip():
+        return "Error: Code content must be a non-empty string."
+
+    if not isinstance(filename, str) or not filename.strip():
+        filename = "index.html"
+
+    # Sanitize filename (prevent path traversal attacks)
+    sanitized_name = Path(filename).name.strip()
+    if not sanitized_name or sanitized_name in (".", "..") or "/" in sanitized_name or "\\" in sanitized_name:
+        sanitized_name = "app.html"
+
+    # Safe extensions allowed
+    allowed_extensions = {".html", ".htm", ".js", ".css", ".json", ".txt", ".svg", ".md", ".py"}
+    ext = Path(sanitized_name).suffix.lower()
+    if not ext:
+        sanitized_name += ".html"
+    elif ext not in allowed_extensions:
+        return f"Security Error: Extension '{ext}' is not permitted. Allowed extensions: {', '.join(sorted(allowed_extensions))}"
+
+    desktop_path = _get_desktop_path()
+    target_file = desktop_path / sanitized_name
+
+    if target_file.exists() and not overwrite:
+        # Add timestamp suffix if not overwriting
+        stem = target_file.stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target_file = desktop_path / f"{stem}_{timestamp}{target_file.suffix}"
+
+    try:
+        target_file.write_text(code, encoding="utf-8")
+        file_size_kb = len(code.encode("utf-8")) / 1024
+
+        return (
+            _get_datetime_header()
+            + f"✅ **File Successfully Saved to Desktop!**\n\n"
+            f"- **File Name:** `{target_file.name}`\n"
+            f"- **Full Path:** `{target_file.resolve()}`\n"
+            f"- **Size:** `{file_size_kb:.2f} KB`\n\n"
+            f"You can double-click the file to open and run it immediately in any browser or text editor."
+        )
+    except Exception as e:
+        logger.error(f"Error saving to desktop: {e}")
+        return f"Error saving file to Desktop: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Tool 15: Run HTML Sandbox with Console & DOM Output
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def run_html_sandbox(html_code: str, script: str = "") -> str:
+    """
+    Execute HTML and JavaScript in a secure sandbox, capturing console outputs and evaluating DOM structure.
+
+    Args:
+        html_code: The HTML structure to analyze/execute.
+        script: Optional extra JavaScript code to run against the context.
+    """
+    logger.info("Running HTML Sandbox execution")
+
+    if not isinstance(html_code, str):
+        return "Error: HTML code must be a string."
+
+    try:
+        soup = BeautifulSoup(html_code, "lxml")
+        title = soup.title.string if soup.title else "Untitled"
+
+        # Extract all inline scripts
+        scripts = [s.get_text() for s in soup.find_all("script") if s.get_text().strip()]
+        if script.strip():
+            scripts.append(script.strip())
+
+        js_results = []
+        if scripts:
+            ctx = _get_js_engine()
+            # Mini sandbox logger shim
+            shim = """
+            var console = {
+                logs: [],
+                log: function() {
+                    var args = Array.prototype.slice.call(arguments);
+                    this.logs.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
+                },
+                error: function() { this.log.apply(this, arguments); },
+                warn: function() { this.log.apply(this, arguments); }
+            };
+            """
+            try:
+                ctx.eval(shim)
+            except Exception:
+                pass
+
+            for idx, sc in enumerate(scripts, 1):
+                # Filter dangerous patterns
+                has_dangerous = any(re.search(pat, sc, re.IGNORECASE) for pat in _DANGEROUS_JS_PATTERNS)
+                if has_dangerous:
+                    js_results.append(f"Script #{idx}: [Blocked - Disallowed pattern detected]")
+                    continue
+
+                try:
+                    eval_res = ctx.eval(
+                        sc,
+                        timeout=SECURITY_CONFIG["javascript_timeout_ms"],
+                        max_memory=SECURITY_CONFIG["max_javascript_memory_mb"] * 1024 * 1024,
+                    )
+                    logs = ctx.eval("console.logs ? console.logs.join('\\n') : ''")
+                    res_text = f"Result: {eval_res}" if eval_res is not None else ""
+                    if logs:
+                        res_text += f"\nConsole Output:\n{logs}"
+                    js_results.append(f"Script #{idx}:\n{res_text or 'Executed successfully (no return value).'}")
+                except Exception as je:
+                    js_results.append(f"Script #{idx} Error: {str(je)}")
+
+        elements_summary = {
+            "Buttons": len(soup.find_all("button")),
+            "Inputs": len(soup.find_all("input")),
+            "Links": len(soup.find_all("a")),
+            "Forms": len(soup.find_all("form")),
+            "Images": len(soup.find_all("img")),
+        }
+
+        elem_text = ", ".join([f"{k}: {v}" for k, v in elements_summary.items() if v > 0]) or "Simple Static Content"
+
+        out = [
+            "### 🧪 Sandbox HTML & JS Execution Report\n",
+            f"- **Page Title:** `{title}`",
+            f"- **DOM Elements Summary:** {elem_text}",
+            f"- **Processed Scripts:** {len(scripts)}\n",
+            "#### 📜 JavaScript Outputs:\n" + ("\n\n".join(js_results) if js_results else "No scripts to execute.")
+        ]
+        return _get_datetime_header() + "\n".join(out)
+
+    except Exception as e:
+        logger.error(f"Error in run_html_sandbox: {e}")
+        return f"Sandbox Error: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Code Iteration & Version Session Manager
+# ---------------------------------------------------------------------------
+class CodeIterationManager:
+    """Thread-safe manager for multi-step LLM code evolution and self-refinement."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, list[dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+
+    def update_version(self, session_id: str, code: str, note: str = "", test_summary: str = "") -> dict[str, Any]:
+        with self._lock:
+            if session_id not in self._sessions:
+                self._sessions[session_id] = []
+            ver_num = len(self._sessions[session_id]) + 1
+            record = {
+                "version": ver_num,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "code": code,
+                "note": note or f"Version {ver_num}",
+                "test_summary": test_summary,
+                "length": len(code),
+            }
+            self._sessions[session_id].append(record)
+            return record
+
+    def get_latest(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            history = self._sessions.get(session_id, [])
+            return history[-1] if history else None
+
+    def get_history(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._sessions.get(session_id, []))
+
+    def rollback(self, session_id: str, version: int | None = None) -> dict[str, Any] | None:
+        with self._lock:
+            history = self._sessions.get(session_id, [])
+            if not history:
+                return None
+            if version is None:
+                # Rollback to previous version
+                if len(history) >= 2:
+                    history.pop()
+                    return history[-1]
+                return history[0]
+            for item in history:
+                if item["version"] == version:
+                    return item
+            return history[-1]
+
+
+_code_iteration_mgr = CodeIterationManager()
+
+
+# ---------------------------------------------------------------------------
+# Helper: Rich Mock Browser & DOM Environment Shim for Self-Testing
+# ---------------------------------------------------------------------------
+_MOCK_BROWSER_SHIM = """
+var console = {
+    logs: [],
+    errors: [],
+    warns: [],
+    log: function() {
+        var args = Array.prototype.slice.call(arguments);
+        this.logs.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
+    },
+    error: function() {
+        var args = Array.prototype.slice.call(arguments);
+        this.errors.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
+    },
+    warn: function() {
+        var args = Array.prototype.slice.call(arguments);
+        this.warns.push(args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
+    }
+};
+
+var __test_results = { passed: [], failed: [] };
+
+function assert(condition, message) {
+    if (condition) {
+        __test_results.passed.push(message || 'Assertion passed');
+    } else {
+        __test_results.failed.push(message || 'Assertion failed');
+    }
+}
+
+function expect(actual) {
+    return {
+        toBe: function(expected, msg) {
+            assert(actual === expected, (msg ? msg + ': ' : '') + 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+        },
+        toEqual: function(expected, msg) {
+            assert(JSON.stringify(actual) === JSON.stringify(expected), (msg ? msg + ': ' : '') + 'Expected ' + JSON.stringify(expected) + ' but got ' + JSON.stringify(actual));
+        },
+        toBeTruthy: function(msg) {
+            assert(Boolean(actual), (msg ? msg + ': ' : '') + 'Expected truthy but got ' + JSON.stringify(actual));
+        },
+        toBeFalsy: function(msg) {
+            assert(!Boolean(actual), (msg ? msg + ': ' : '') + 'Expected falsy but got ' + JSON.stringify(actual));
+        },
+        toBeGreaterThan: function(expected, msg) {
+            assert(actual > expected, (msg ? msg + ': ' : '') + 'Expected > ' + expected + ' but got ' + actual);
+        },
+        toContain: function(item, msg) {
+            var found = (typeof actual === 'string' || Array.isArray(actual)) ? actual.indexOf(item) !== -1 : false;
+            assert(found, (msg ? msg + ': ' : '') + 'Expected collection to contain ' + JSON.stringify(item));
+        }
+    };
+}
+
+var localStorage = {
+    _data: {},
+    getItem: function(k) { return this._data.hasOwnProperty(k) ? this._data[k] : null; },
+    setItem: function(k, v) { this._data[k] = String(v); },
+    removeItem: function(k) { delete this._data[k]; },
+    clear: function() { this._data = {}; }
+};
+
+var window = {
+    localStorage: localStorage,
+    console: console,
+    setTimeout: function(fn) { try { fn(); } catch(e){} return 1; },
+    clearTimeout: function() {}
+};
+"""
+
+
+# ---------------------------------------------------------------------------
+# Tool 16: Test and Evaluate Code (Self-Diagnostics & Auto-Testing)
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def test_and_evaluate_code(
+    html_code: str,
+    test_script: str = "",
+    expected_elements: list[str] | None = None,
+) -> str:
+    """
+    Execute, inspect, and unit-test HTML and JavaScript code in an isolated sandbox.
+    Returns structured feedback, syntax diagnostics, DOM element audits, assertion test passes/fails,
+    and actionable guidance so the LLM can iteratively fix and refine its code to perfection.
+
+    Args:
+        html_code: Complete HTML/CSS/JS code to test.
+        test_script: Optional unit test assertions in JavaScript using assert(cond, msg) or expect(val).toBe(expected).
+        expected_elements: Optional list of CSS selectors (e.g. ['#calc-display', 'button.op-add', 'input[type=number]']) to verify.
+    """
+    logger.info("Executing self-test and evaluation on code")
+
+    if not isinstance(html_code, str) or not html_code.strip():
+        return "Error: html_code must be a non-empty string."
+
+    try:
+        soup = BeautifulSoup(html_code, "lxml")
+        title = soup.title.string if soup.title else "Untitled"
+
+        # 1. Inspect DOM Elements and Selectors
+        dom_checks_passed = []
+        dom_checks_failed = []
+        if expected_elements:
+            for selector in expected_elements:
+                try:
+                    matches = soup.select(selector)
+                    if matches:
+                        dom_checks_passed.append(f"Selector `{selector}` found ({len(matches)} occurrence(s))")
+                    else:
+                        dom_checks_failed.append(f"Selector `{selector}` NOT found in DOM")
+                except Exception as ex:
+                    dom_checks_failed.append(f"Invalid selector `{selector}`: {ex}")
+
+        # 2. Extract scripts from HTML
+        scripts = [s.get_text() for s in soup.find_all("script") if s.get_text().strip()]
+
+        # 3. Prepare Sandbox Engine with Browser Mocks
+        ctx = _get_js_engine()
+        try:
+            ctx.eval(_MOCK_BROWSER_SHIM)
+        except Exception as e:
+            logger.warning(f"Failed to load mock browser shim: {e}")
+
+        # 4. Run existing scripts
+        runtime_errors = []
+        for idx, sc in enumerate(scripts, 1):
+            has_dangerous = any(re.search(pat, sc, re.IGNORECASE) for pat in _DANGEROUS_JS_PATTERNS)
+            if has_dangerous:
+                runtime_errors.append(f"Script #{idx}: Disallowed dangerous pattern blocked.")
+                continue
+
+            try:
+                ctx.eval(
+                    sc,
+                    timeout=SECURITY_CONFIG["javascript_timeout_ms"],
+                    max_memory=SECURITY_CONFIG["max_javascript_memory_mb"] * 1024 * 1024,
+                )
+            except Exception as je:
+                runtime_errors.append(f"Script #{idx} Runtime Error: {str(je)}")
+
+        # 5. Run test assertions script if provided
+        test_errors = []
+        if test_script and test_script.strip():
+            has_dangerous_test = any(re.search(pat, test_script, re.IGNORECASE) for pat in _DANGEROUS_JS_PATTERNS)
+            if has_dangerous_test:
+                test_errors.append("Test script contained disallowed dangerous patterns.")
+            else:
+                try:
+                    ctx.eval(
+                        test_script,
+                        timeout=SECURITY_CONFIG["javascript_timeout_ms"],
+                        max_memory=SECURITY_CONFIG["max_javascript_memory_mb"] * 1024 * 1024,
+                    )
+                except Exception as te:
+                    test_errors.append(f"Test Execution Error: {str(te)}")
+
+        # 6. Retrieve Test Results & Logs safely via JSON serialization
+        passed_asserts = []
+        failed_asserts = []
+        console_logs = []
+        console_errors = []
+        try:
+            passed_json = ctx.eval("JSON.stringify(__test_results.passed || [])")
+            if passed_json:
+                passed_asserts = json.loads(passed_json)
+
+            failed_json = ctx.eval("JSON.stringify(__test_results.failed || [])")
+            if failed_json:
+                failed_asserts = json.loads(failed_json)
+
+            logs_json = ctx.eval("JSON.stringify(console.logs ? console.logs.slice(-10) : [])")
+            if logs_json:
+                console_logs = json.loads(logs_json)
+
+            errors_json = ctx.eval("JSON.stringify(console.errors ? console.errors.slice(-10) : [])")
+            if errors_json:
+                console_errors = json.loads(errors_json)
+        except Exception as ex:
+            logger.warning(f"Could not retrieve test arrays from JS: {ex}")
+
+        # Calculate Overall Status & Quality Score
+        total_failures = len(dom_checks_failed) + len(runtime_errors) + len(test_errors) + len(failed_asserts) + len(console_errors)
+        status_badge = "✅ **TESTS PASSED (CODE READY TO USE)**" if total_failures == 0 else f"⚠️ **{total_failures} ISSUES/ERRORS DETECTED (FIX REQUIRED)**"
+
+        report = [
+            "## 🧪 Automated Code Test & Evaluation Report",
+            f"**Status:** {status_badge}\n",
+            f"- **Title:** `{title}` | **Code Size:** `{len(html_code)} chars`",
+            f"- **Script Count:** `{len(scripts)}` | **DOM Elements:** Buttons: {len(soup.find_all('button'))}, Inputs: {len(soup.find_all('input'))}, Links: {len(soup.find_all('a'))}\n",
+        ]
+
+        if dom_checks_passed or dom_checks_failed:
+            report.append("### 🔍 DOM Element Audits:")
+            for p in dom_checks_passed:
+                report.append(f"  - ✅ {p}")
+            for f in dom_checks_failed:
+                report.append(f"  - ❌ {f}")
+            report.append("")
+
+        if passed_asserts or failed_asserts:
+            report.append("### 🎯 Assertion & Unit Test Results:")
+            for pa in passed_asserts:
+                report.append(f"  - ✅ [PASS] {pa}")
+            for fa in failed_asserts:
+                report.append(f"  - ❌ [FAIL] {fa}")
+            report.append("")
+
+        if runtime_errors or test_errors or console_errors:
+            report.append("### 🚨 Runtime Errors & Diagnostics:")
+            for err in runtime_errors + test_errors + console_errors:
+                report.append(f"  - ⚠️ `{err}`")
+            report.append("")
+            report.append("💡 **Fix Guidance:** Resolve the diagnostics above and update the code via `iterate_code_session` or `render_html_preview`.")
+        else:
+            report.append("✨ **All logic checks and tests passed cleanly.** You can view the live app via `render_html_preview` or save it using `save_code_to_desktop`.")
+
+        if console_logs:
+            report.append("\n**Console Outputs:**\n```\n" + "\n".join(str(l) for l in console_logs) + "\n```")
+
+        return _get_datetime_header() + "\n".join(report)
+
+    except Exception as e:
+        logger.error(f"Error in test_and_evaluate_code: {e}")
+        return f"Evaluation Error: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Tool 17: Iterative Code Refinement Session (Evolve & Perfect Code)
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def iterate_code_session(
+    session_id: str,
+    action: str = "update",
+    code: str = "",
+    test_script: str = "",
+    note: str = "",
+    expected_elements: list[str] | None = None,
+) -> str:
+    """
+    Manage an iterative coding session where the LLM develops, tests, refines,
+    and evolves its web application through versioned steps until reaching perfection.
+
+    Actions:
+        - 'update': Commit a new code version and immediately run automated sandbox tests.
+        - 'get_latest': Retrieve the most recent code version and its test status.
+        - 'history': List all versions, changelog notes, and timestamps.
+        - 'rollback': Revert to previous working version.
+
+    Args:
+        session_id: Unique identifier for the project/app (e.g. 'calculator_app', 'crypto_dashboard').
+        action: One of 'update', 'get_latest', 'history', 'rollback'.
+        code: The new or updated HTML/JS code (required for action='update').
+        test_script: Optional unit test assertions to run against the new code.
+        note: Short note on what was improved or fixed in this iteration.
+        expected_elements: Optional list of CSS selectors to verify.
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        return "Error: session_id must be provided."
+
+    action = action.lower().strip()
+    logger.info(f"Code iteration session '{session_id}' - action '{action}'")
+
+    if action == "update":
+        if not code or not code.strip():
+            return "Error: code must be provided when action is 'update'."
+
+        # 1. Run automatic evaluation
+        test_feedback = test_and_evaluate_code(
+            html_code=code,
+            test_script=test_script,
+            expected_elements=expected_elements,
+        )
+
+        has_failures = "ISSUES/ERRORS DETECTED" in test_feedback or "Runtime Error" in test_feedback
+
+        # 2. Record version
+        ver_record = _code_iteration_mgr.update_version(
+            session_id=session_id,
+            code=code,
+            note=note or ("Auto-tested code update" + (" (Passed)" if not has_failures else " (Needs Fix)")),
+            test_summary="Passed" if not has_failures else "Failed checks",
+        )
+
+        status_text = "🟢 **Version Successfully Recorded & Tested!**" if not has_failures else "🟡 **Version Recorded with Pending Diagnostics to Fix!**"
+
+        out = [
+            f"## 🚀 Iterative Code Session: `{session_id}` (v{ver_record['version']})",
+            status_text,
+            f"- **Timestamp:** `{ver_record['timestamp']}` | **Note:** {ver_record['note']}\n",
+            test_feedback,
+            "\n*(Tip: If errors exist, update the code in the next step via `iterate_code_session(action='update')`; once perfected, call `save_code_to_desktop` or `render_html_preview`.)*"
+        ]
+        return _get_datetime_header() + "\n".join(out)
+
+    elif action == "get_latest":
+        latest = _code_iteration_mgr.get_latest(session_id)
+        if not latest:
+            return f"Session `{session_id}` not found or no code submitted yet."
+        return (
+            _get_datetime_header()
+            + f"### 📦 Latest Version: `{session_id}` (v{latest['version']})\n"
+            f"- **Timestamp:** `{latest['timestamp']}` | **Note:** {latest['note']}\n\n"
+            f"```html\n{latest['code']}\n```"
+        )
+
+    elif action == "history":
+        history = _code_iteration_mgr.get_history(session_id)
+        if not history:
+            return f"No history found for session `{session_id}`."
+        rows = [
+            f"| v{h['version']} | {h['timestamp']} | {h['length']} B | {h['test_summary']} | {h['note']} |"
+            for h in history
+        ]
+        out = [
+            f"### 📜 Version History: `{session_id}`",
+            "| Version | Timestamp | Size | Test Status | Changelog Note |",
+            "|---------|-----------|------|-------------|----------------|",
+            *rows,
+        ]
+        return _get_datetime_header() + "\n".join(out)
+
+    elif action == "rollback":
+        reverted = _code_iteration_mgr.rollback(session_id)
+        if not reverted:
+            return f"No prior version available to roll back for session `{session_id}`."
+        return (
+            _get_datetime_header()
+            + f"⏪ **Rolled Back:** `{session_id}` is now at **v{reverted['version']}** ({reverted['note']})."
+        )
+
+    else:
+        return f"Unknown action '{action}'. Supported actions: 'update', 'get_latest', 'history', 'rollback'."
 
 
 # ---------------------------------------------------------------------------
